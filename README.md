@@ -1,4 +1,4 @@
-﻿# 🧠 BrainAgent for DeepSeek Harness
+# 🧠 BrainAgent for DeepSeek Harness
 
 **Когнитивная архитектура как плагин: память, эмоции, мотивация, обучение и автономия для вашего агента dsh.**
 
