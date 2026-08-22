@@ -1,0 +1,5 @@
+# BrainAgent bundle patch — applied when a dsh profile includes this package.
+- insert:
+    - id: brainagent
+      name: dsh-brainagent
+      config: {}

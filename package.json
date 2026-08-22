@@ -1,0 +1,46 @@
+{
+  "name": "dsh-brainagent",
+  "version": "0.1.0",
+  "description": "BrainAgent — cognitive architecture plugin for DeepSeek Harness (dsh): brain-inspired memory, emotions, drives, learning and autonomy",
+  "type": "module",
+  "main": "src/index.ts",
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "cognitive-architecture",
+    "brainagent",
+    "memory",
+    "autonomy"
+  ],
+  "author": "Stanislav",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/USERNAME/dsh-brainagent.git"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-commands": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

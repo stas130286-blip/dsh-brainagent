@@ -1,0 +1,16 @@
+# Dependencies & build artifacts
+node_modules/
+lib/
+*.tsbuildinfo
+
+# Local runtime state (agent memory, profiles, sessions)
+.dsh-home/
+.brainagent/
+
+# Local dev overlays (machine-specific paths)
+cordis.yml
+
+# Logs & temp
+*.log
+*.tmp
+.DS_Store

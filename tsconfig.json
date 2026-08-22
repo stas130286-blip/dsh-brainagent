@@ -1,0 +1,26 @@
+﻿{
+  // Local plugin project modeled after repo packages: project references keep
+  // vendor/package sources out of this program, while tsconfig.base.json's
+  // paths provide source-level resolution for editor/tsx tooling.
+  // Typecheck: pnpm exec tsc -p brainagent/tsconfig.json
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../vendor/cosmokit" },
+    { "path": "../vendor/cordis" },
+    { "path": "../vendor/schemastery" },
+    { "path": "../packages/core/session" },
+    { "path": "../packages/core/agent" },
+    { "path": "../packages/core/tools" },
+    { "path": "../packages/llm/llm" },
+    { "path": "../packages/interaction/commands" }
+  ]
+}
