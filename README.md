@@ -1,4 +1,4 @@
-# 🧠 BrainAgent for DeepSeek Harness
+﻿# 🧠 BrainAgent for DeepSeek Harness
 
 **Когнитивная архитектура как плагин: память, эмоции, мотивация, обучение и автономия для вашего агента dsh.**
 
@@ -56,7 +56,7 @@
 Клонируйте репозиторий и установите в профиль:
 
 ```sh
-git clone https://github.com/USERNAME/dsh-brainagent.git
+git clone https://github.com/stas130286-blip/dsh-brainagent.git
 dsh plugin --profile мой-профиль add ./dsh-brainagent
 dsh --profile мой-профиль
 ```
@@ -160,7 +160,7 @@ BrainAgent был разработан как когнитивный слой д
 **Install**
 
 ```sh
-git clone https://github.com/USERNAME/dsh-brainagent.git
+git clone https://github.com/stas130286-blip/dsh-brainagent.git
 dsh plugin --profile my-profile add ./dsh-brainagent
 dsh --profile my-profile
 ```
@@ -174,3 +174,4 @@ TypeScript sources are executed natively by dsh — no build step required.
 **License**: BrainAgent Noncommercial License — free noncommercial use for everyone; commercial use requires an agreement with the author. See [LICENSE](LICENSE).
 
 **Origin**: BrainAgent was developed as a cognitive layer for NeuroClaw and ported to DeepSeek Harness with full functionality preserved.
+

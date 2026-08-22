@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "dsh-brainagent",
   "version": "0.1.0",
   "description": "BrainAgent — cognitive architecture plugin for DeepSeek Harness (dsh): brain-inspired memory, emotions, drives, learning and autonomy",
@@ -28,7 +28,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/USERNAME/dsh-brainagent.git"
+    "url": "https://github.com/stas130286-blip/dsh-brainagent.git"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -44,3 +44,4 @@
     }
   }
 }
+
