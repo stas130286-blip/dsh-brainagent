@@ -143,11 +143,6 @@ Thalamus (классификация) → Amygdala (эмоции) → Hippocampu
 **BrainAgent Noncommercial License** — свободное некоммерческое использование для всех;
 коммерческое использование только по соглашению с автором. Подробнее в [LICENSE](LICENSE).
 
-## Происхождение
-
-BrainAgent был разработан как когнитивный слой для NeuroClaw и портирован на DeepSeek Harness
-с сохранением всей функциональности.
-
 ---
 
 <a id="english"></a>
@@ -188,5 +183,3 @@ Ships a prebuilt bundle (`lib/index.js`) — git installs need no build step and
 **Tests**: `pnpm vitest run` — 23 files, 571 tests
 
 **License**: BrainAgent Noncommercial License — free noncommercial use for everyone; commercial use requires an agreement with the author. See [LICENSE](LICENSE).
-
-**Origin**: BrainAgent was developed as a cognitive layer for NeuroClaw and ported to DeepSeek Harness with full functionality preserved.
