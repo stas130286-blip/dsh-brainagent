@@ -2,6 +2,8 @@
 
 ![BrainAgent](assets/banner.png)
 
+[![release](https://img.shields.io/github/v/release/stas130286-blip/dsh-brainagent)](https://github.com/stas130286-blip/dsh-brainagent/releases) [![topic](https://img.shields.io/badge/dsh-plugin-blue)](https://github.com/topics/dsh-plugin) [![license](https://img.shields.io/badge/license-Noncommercial-orange)](LICENSE)
+
 **Когнитивная архитектура как плагин: память, эмоции, мотивация, обучение и автономия для вашего агента dsh.**
 
 [English version below](#english)
