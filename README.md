@@ -56,12 +56,12 @@
 Клонируйте репозиторий и установите в профиль:
 
 ```sh
-git clone https://github.com/stas130286-blip/dsh-brainagent.git
+git clone https://github.com/USERNAME/dsh-brainagent.git
 dsh plugin --profile мой-профиль add ./dsh-brainagent
 dsh --profile мой-профиль
 ```
 
-> Пакет использует TypeScript-исходники напрямую — dsh выполняет их нативно, сборка не требуется.
+> Пакет содержит готовый собранный модуль (`lib/index.js`) — установка с GitHub не требует ни сборки, ни разрешений на скрипты.
 
 ### Вариант 2: локальный оверлей (для разработки)
 
@@ -160,12 +160,12 @@ BrainAgent был разработан как когнитивный слой д
 **Install**
 
 ```sh
-git clone https://github.com/stas130286-blip/dsh-brainagent.git
+git clone https://github.com/USERNAME/dsh-brainagent.git
 dsh plugin --profile my-profile add ./dsh-brainagent
 dsh --profile my-profile
 ```
 
-TypeScript sources are executed natively by dsh — no build step required.
+Ships a prebuilt bundle (`lib/index.js`) — git installs need no build step and no script permissions.
 
 **Commands**: `/brain status`, `/brain memory <query>`, `/brain goals`, `/brain neuro`, `/brain habits`, `/brain learning`, `/brain circadian`, `/brain dream` and more
 
@@ -174,4 +174,3 @@ TypeScript sources are executed natively by dsh — no build step required.
 **License**: BrainAgent Noncommercial License — free noncommercial use for everyone; commercial use requires an agreement with the author. See [LICENSE](LICENSE).
 
 **Origin**: BrainAgent was developed as a cognitive layer for NeuroClaw and ported to DeepSeek Harness with full functionality preserved.
-

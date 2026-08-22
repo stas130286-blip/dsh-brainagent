@@ -1,7 +1,9 @@
 # Dependencies & build artifacts
 node_modules/
-lib/
+lib/types/
 *.tsbuildinfo
+# NOTE: lib/index.js (the shipped bundle) is committed on purpose —
+# git installs must work without running any build scripts.
 
 # Local runtime state (agent memory, profiles, sessions)
 .dsh-home/

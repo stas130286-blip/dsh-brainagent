@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "description": "BrainAgent — cognitive architecture plugin for DeepSeek Harness (dsh): brain-inspired memory, emotions, drives, learning and autonomy",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "lib/index.js",
   "files": [
-    "src",
+    "lib/index.js",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=lib/index.js --external:@deepseek-ai/*",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -30,11 +31,14 @@
     "type": "git",
     "url": "https://github.com/stas130286-blip/dsh-brainagent.git"
   },
+  "dependencies": {
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-agent": "*",
     "@deepseek-ai/dsh-commands": "*",
-    "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-tools": "*"
   },
@@ -44,4 +48,3 @@
     }
   }
 }
-
