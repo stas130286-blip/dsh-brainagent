@@ -53,19 +53,29 @@
 
 ### Вариант 1: как пакет dsh (рекомендуется)
 
-Клонируйте репозиторий и установите в профиль:
+Одна команда — плагин скачается прямо с GitHub:
 
 ```sh
-git clone https://github.com/USERNAME/dsh-brainagent.git
-dsh plugin --profile мой-профиль add ./dsh-brainagent
-dsh --profile мой-профиль
+npx @deepseek-ai/dsh plugin --profile web add github:stas130286-blip/dsh-brainagent
+```
+
+Затем запустите Web UI:
+
+```sh
+npx @deepseek-ai/dsh web
 ```
 
 > Пакет содержит готовый собранный модуль (`lib/index.js`) — установка с GitHub не требует ни сборки, ни разрешений на скрипты.
 
-### Вариант 2: локальный оверлей (для разработки)
+### Вариант 2: из локальной копии (для разработки)
 
-Добавьте в свой `cordis.patch.yml` (или запускайте с `--patch`):
+```sh
+git clone https://github.com/stas130286-blip/dsh-brainagent.git
+npx @deepseek-ai/dsh plugin --profile web add ./dsh-brainagent
+npx @deepseek-ai/dsh web
+```
+
+Либо подключите исходники оверлеем (запускайте с `--patch`):
 
 ```yaml
 - insert:
@@ -157,12 +167,18 @@ BrainAgent был разработан как когнитивный слой д
 - **Self-regulation** — circadian rhythm, Dream Mode consolidation, Attention Gate token budgeting, Token Economy
 - **Personality** — Agent Identity, Qualia Simulator, Temporal Binding
 
-**Install**
+**Install** — one command, fetched straight from GitHub:
 
 ```sh
-git clone https://github.com/USERNAME/dsh-brainagent.git
-dsh plugin --profile my-profile add ./dsh-brainagent
-dsh --profile my-profile
+npx @deepseek-ai/dsh plugin --profile web add github:stas130286-blip/dsh-brainagent
+npx @deepseek-ai/dsh web
+```
+
+Or from a local clone:
+
+```sh
+git clone https://github.com/stas130286-blip/dsh-brainagent.git
+npx @deepseek-ai/dsh plugin --profile web add ./dsh-brainagent
 ```
 
 Ships a prebuilt bundle (`lib/index.js`) — git installs need no build step and no script permissions.
