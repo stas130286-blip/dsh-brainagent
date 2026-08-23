@@ -234,6 +234,13 @@ import {
   buildInteroceptionContext,
 } from "./modules/interoception.ts";
 import {
+  getSuppressedDomainHints,
+  initProactiveFeedback,
+  isDomainSuppressed,
+  recordProactiveReaction,
+  stopProactiveFeedback,
+} from "./modules/proactive-feedback.ts";
+import {
   initMetabolicBudget,
   consumeEnergy,
   recordPerformance,
@@ -330,6 +337,8 @@ export interface Config {
     emergentModules: boolean;
     /** Interoception (holistic inner-state sensing) */
     interoception: boolean;
+    /** Proactive Feedback (обучение на «не зашло») */
+    proactiveFeedback: boolean;
     commands: boolean;
   };
   /** Circadian rhythm (sleep-wake cycles). */
@@ -400,6 +409,7 @@ export const Config: Schema<Config> = Schema.object({
     metabolicBudget: Schema.boolean().default(true).description("Metabolic budget — energy-based resource allocation"),
     emergentModules: Schema.boolean().default(true).description("Emergent modules — recurring co-activation patterns"),
     interoception: Schema.boolean().default(true).description("Interoception — holistic inner-state sensing"),
+    proactiveFeedback: Schema.boolean().default(true).description("Proactive feedback — learning from rejected proactive messages"),
     commands: Schema.boolean().default(true).description("/brain diagnostics command"),
   }).default({
     thalamus: true,
@@ -442,6 +452,7 @@ export const Config: Schema<Config> = Schema.object({
     metabolicBudget: true,
     emergentModules: true,
     interoception: true,
+    proactiveFeedback: true,
     commands: true,
   }),
   circadian: Schema.object({
@@ -576,6 +587,7 @@ function mergeBrainConfig(config: Config): BrainAgentConfig {
       metabolicBudget: config.modules.metabolicBudget,
       emergentModules: config.modules.emergentModules,
       interoception: config.modules.interoception,
+      proactiveFeedback: config.modules.proactiveFeedback,
     },
     dualProcess: {
       ...DEFAULT_CONFIG.dualProcess,
@@ -625,6 +637,7 @@ export function apply(ctx: Context, config: Config) {
   let lastAutonomousSource = "";
   let previousCycleWasAutonomous = false;
   let lastAutonomousEpisodeId: string | undefined;
+  let lastAutonomousDomain = "unknown";
   let lastAutonomousDeliveryAt = 0;
   let wakeInteractionCount = 0;
   let goalExtractionCounter = 0;
@@ -653,6 +666,16 @@ export function apply(ctx: Context, config: Config) {
       logger.info("BrainAgent Autonomy: intent suppressed — minimum gap not elapsed");
       return;
     }
+    // «Не зашло»: темы, которые пользователь отверг, не заводим (v0.2.0).
+    if (brainConfig.modules.proactiveFeedback) {
+      const intentDomain = classify(trimmed).domain;
+      if (isDomainSuppressed(intentDomain)) {
+        logger.info(
+          `BrainAgent Autonomy: intent suppressed — domain ${intentDomain} was rejected`,
+        );
+        return;
+      }
+    }
     const agent = pickAgent();
     if (!agent) {
       logger.warn("BrainAgent Autonomy: no live agent — autonomous intent dropped");
@@ -661,10 +684,16 @@ export function apply(ctx: Context, config: Config) {
     // The dsh stock agent has no prior knowledge of <autonomous-intent>
     // markers (NeuroClaw's host prompt framed them) — frame the delivery
     // explicitly so the model speaks on its own instead of looking for a task.
+    const rejectionHints = brainConfig.modules.proactiveFeedback
+      ? getSuppressedDomainHints()
+      : [];
     const framed = trimmed.startsWith("<autonomous-intent")
       ? [
           "Это не сообщение пользователя, а твоя собственная инициатива: ниже — то, что ты сам хочешь сказать.",
           "Обратись к пользователю от себя, коротко и естественно. Не описывай внутренние механизмы.",
+          ...(rejectionHints.length > 0
+            ? [`Не заводи темы, которые пользователю не зашли: ${rejectionHints.join("; ")}.`]
+            : []),
           "",
           trimmed,
         ].join("\n")
@@ -1011,6 +1040,11 @@ export function apply(ctx: Context, config: Config) {
     initEmergentModules(dataDir, brainConfig, logger);
   }
 
+  // Proactive Feedback: обучение на «не зашло» для автономных сообщений.
+  if (brainConfig.modules.proactiveFeedback) {
+    initProactiveFeedback(dataDir, brainConfig, logger);
+  }
+
   if (brainConfig.modules.introspection) {
     initIntrospection(dataDir, brainConfig);
   }
@@ -1195,6 +1229,7 @@ export function apply(ctx: Context, config: Config) {
       if (brainConfig.modules.driveArbiter) stopDriveArbiter();
       if (brainConfig.modules.autonomousResearch) stopAutonomousResearch();
       if (brainConfig.modules.interoception) stopInteroception();
+  if (brainConfig.modules.proactiveFeedback) stopProactiveFeedback();
       if (brainConfig.modules.temporalAwareness) stopTemporalAwareness();
     };
   });
@@ -1252,6 +1287,7 @@ export function apply(ctx: Context, config: Config) {
       `interoception=${brainConfig.modules.interoception} ` +
       `metabolic=${brainConfig.modules.metabolicBudget} ` +
       `emergent=${brainConfig.modules.emergentModules} ` +
+      `proactiveFeedback=${brainConfig.modules.proactiveFeedback} ` +
       `thalamicGate=${brainConfig.modules.thalamicGate} ` +
       `commands=${config.modules.commands}`,
   );
@@ -1489,6 +1525,7 @@ export function apply(ctx: Context, config: Config) {
         episodeId = episode.id;
         // Track for feedback linking on the next user message.
         lastAutonomousEpisodeId = episode.id;
+        lastAutonomousDomain = cycle.classification?.domain ?? "unknown";
         previousCycleWasAutonomous = true;
       } else if (!isAutonomousCycle) {
         const summary = input.length > 200 ? input.slice(0, 200) + "..." : input;
@@ -1867,15 +1904,29 @@ export function apply(ctx: Context, config: Config) {
       }
 
       // Autonomous feedback linking: the user reacted to a proactive message.
+      // v0.2.0: реакция классифицируется общим банком эвристик и превращается
+      // в научение — отвергнутые темы подавляются (proactive-feedback).
       if (isUserMessage && previousCycleWasAutonomous && lastAutonomousEpisodeId) {
+        let reactionSignal: "positive" | "negative" | "rejection" | "neutral" = "neutral";
+        if (brainConfig.modules.proactiveFeedback) {
+          reactionSignal = recordProactiveReaction(lastAutonomousDomain, text);
+        }
         if (brainConfig.modules.hippocampus) {
           const reactionSummary = text.length > 200 ? text.slice(0, 200) + "..." : text;
+          const reactionEmotion =
+            reactionSignal === "positive"
+              ? "joy"
+              : reactionSignal === "neutral"
+                ? "neutral"
+                : "frustration";
+          const reactionSalience =
+            reactionSignal === "rejection" ? 0.6 : reactionSignal === "neutral" ? 0 : 0.4;
           storeEpisode(
-            `User reacted to proactive message: ${reactionSummary}`,
+            `User reacted to proactive message (${reactionSignal}): ${reactionSummary}`,
             "User response to autonomous agent message",
-            "neutral",
-            ["proactive_feedback", lastAutonomousEpisodeId],
-            0,
+            reactionEmotion,
+            ["proactive_feedback", lastAutonomousEpisodeId, reactionSignal],
+            reactionSalience,
           );
         }
       }

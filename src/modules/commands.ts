@@ -10,7 +10,9 @@ import { getCircadianStats, forcePhase } from "./circadian-rhythm.ts";
 import { getDopamineStats } from "./dopamine-system.ts";
 import { forceConsolidation, getDreamStats } from "./dream-mode.ts";
 import { getEmergentStats } from "./emergent-modules.ts";
+import { getEmbeddingsStatus } from "./hippocampus.ts";
 import { getInjectionMetrics } from "./injection-metrics.ts";
+import { getProactiveFeedbackStats } from "./proactive-feedback.ts";
 import { getStats as getMemoryStats } from "./hippocampus.ts";
 import { getLearningStats } from "./learning-coordinator.ts";
 import { getMetabolicStats } from "./metabolic-budget.ts";
@@ -852,6 +854,7 @@ export function buildStatusReport(config: BrainAgentConfig): { text: string } {
     `  Metabolic Budget (energy):     ${config.modules.metabolicBudget ? "ON" : "OFF"}`,
     `  Emergent Modules (patterns):   ${config.modules.emergentModules ? "ON" : "OFF"}`,
     `  Interoception (inner state):   ${config.modules.interoception ? "ON" : "OFF"}`,
+    `  Proactive Feedback («не зашло»): ${config.modules.proactiveFeedback ? "ON" : "OFF"}`,
     "",
     "**Memory:**",
     `  Episodic memories:  ${memStats.episodic}`,
@@ -985,6 +988,26 @@ export function buildStatusReport(config: BrainAgentConfig): { text: string } {
       `  Sections: avg ${im.avgSections}, max ${im.maxSections}`,
     );
   }
+
+  // Proactive feedback stats (0.2.0)
+  if (config.modules.proactiveFeedback) {
+    const pf = getProactiveFeedbackStats();
+    lines.push(
+      "",
+      "**Proactive Feedback («не зашло»):**",
+      `  Domains tracked: ${pf.trackedDomains}, Rejections: ${pf.totalRejections}, Accepts: ${pf.totalAccepts}`,
+      `  Suppressed now: ${pf.suppressedDomains.length > 0 ? pf.suppressedDomains.join(", ") : "—"}`,
+    );
+  }
+
+  // Memory search backend status (0.2.0)
+  const emb = getEmbeddingsStatus();
+  lines.push(
+    "",
+    "**Memory Search:**",
+    `  Backend: ${emb.available ? `AI embeddings (${emb.provider} / ${emb.model})` : "TF-IDF (локальный)"}`,
+    `  Cached vectors: episodic ${emb.cached.episodic}, semantic ${emb.cached.semantic}, procedural ${emb.cached.procedural}`,
+  );
 
   if (socialDriveStatsGetter && config.modules.socialDrive) {
     const sd = socialDriveStatsGetter();

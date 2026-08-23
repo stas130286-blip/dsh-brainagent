@@ -27,6 +27,7 @@ import { join } from "node:path";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import { callLLM } from "./llm-client.ts";
 import { VectorIndex } from "./vector-engine.ts";
+import { classifyFeedback } from "./i18n-heuristics.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -279,54 +280,13 @@ export function reinforce(habitId: string, signal: ReinforcementSignal): void {
 
 /**
  * Detect reinforcement signal from user message.
- * Simple heuristic: positive words → positive, correction → negative.
+ * Работает на общем банке RU/EN эвристик (i18n-heuristics, v0.2.0):
+ * отвержение («не надо», «хватит») считается негативным сигналом.
  */
 export function detectReinforcement(text: string): ReinforcementSignal {
-  const lower = text.toLowerCase();
-
-  // Positive signals
-  const positivePatterns = [
-    /спасибо/i,
-    /благодарю/i,
-    /отлично/i,
-    /супер/i,
-    /класс/i,
-    /молодец/i,
-    /круто/i,
-    /здорово/i,
-    /умница/i,
-    /идеально/i,
-    /perfect/i,
-    /great/i,
-    /thanks/i,
-    /awesome/i,
-    /excellent/i,
-    /good job/i,
-    /nice/i,
-    /love it/i,
-    /well done/i,
-  ];
-
-  // Negative signals
-  const negativePatterns = [
-    /не то/i,
-    /неправильно/i,
-    /ошибка/i,
-    /переделай/i,
-    /заново/i,
-    /не так/i,
-    /плохо/i,
-    /неверно/i,
-    /wrong/i,
-    /incorrect/i,
-    /redo/i,
-    /fix/i,
-    /try again/i,
-    /no that's not/i,
-  ];
-
-  if (positivePatterns.some((p) => p.test(lower))) return "positive";
-  if (negativePatterns.some((p) => p.test(lower))) return "negative";
+  const signal = classifyFeedback(text).signal;
+  if (signal === "positive") return "positive";
+  if (signal === "negative" || signal === "rejection") return "negative";
   return "neutral";
 }
 

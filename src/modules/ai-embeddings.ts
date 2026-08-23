@@ -44,6 +44,12 @@ const EMBEDDING_PROVIDER_NAMES: Record<string, string> = {
   openrouter: "OpenRouter",
 };
 
+/** Локальная Ollama по умолчанию: бесплатные эмбеддинги без ключей (v0.2.0). */
+const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
+
+/** Ollama один раз не ответила — больше не дёргаем до перезапуска. */
+let ollamaUnreachable = false;
+
 /**
  * Build an EmbeddingProviderConfig for a given provider key.
  */
@@ -58,11 +64,11 @@ function buildEmbeddingConfig(
   const name = EMBEDDING_PROVIDER_NAMES[providerKey] ?? providerKey;
 
   if (providerKey === "ollama") {
-    if (!entry.baseUrl) return null;
+    // Локальная Ollama работает без ключа; по умолчанию localhost
     return {
       name: "Ollama",
       apiKey: "",
-      baseUrl: entry.baseUrl,
+      baseUrl: entry.baseUrl ?? DEFAULT_OLLAMA_BASE_URL,
       model: spec.model,
       headers: { "Content-Type": "application/json" },
       format: spec.format,
@@ -123,7 +129,11 @@ export function resolveEmbeddingProvider(config: NeuroClawConfig): EmbeddingProv
   // ── Priority 2: hardcoded fallback (no user model or provider lacks embeddings) ──
   const fallbackOrder = ["openai", "google", "ollama", "openrouter"];
   for (const key of fallbackOrder) {
-    const entry = (providers as Record<string, { apiKey?: string; baseUrl?: string }>)[key];
+    // Ollama — бесплатные локальные эмбеддинги: пробуем localhost даже
+    // без явной конфигурации (не запущена — getEmbeddings тихо вернёт null)
+    const entry =
+      (providers as Record<string, { apiKey?: string; baseUrl?: string }>)[key] ??
+      (key === "ollama" ? { baseUrl: DEFAULT_OLLAMA_BASE_URL } : undefined);
     if (!entry) continue;
     const result = buildEmbeddingConfig(key, entry);
     if (result) return result;
@@ -159,15 +169,25 @@ export async function getEmbeddings(
     return null;
   }
 
+  // Локальная Ollama уже не ответила — не дёргаем её до перезапуска (v0.2.0)
+  if (provider.name === "Ollama" && ollamaUnreachable) {
+    return null;
+  }
+
   if (texts.length === 0) return [];
 
   try {
-    if (provider.format === "google") {
-      return await fetchGoogleEmbeddings(texts, provider, logger);
+    const result =
+      provider.format === "google"
+        ? await fetchGoogleEmbeddings(texts, provider, logger)
+        : await fetchOpenAIEmbeddings(texts, provider, logger);
+    if (result === null && provider.name === "Ollama") {
+      ollamaUnreachable = true; // нет модели/сервиса — переключаемся на TF-IDF
     }
-    return await fetchOpenAIEmbeddings(texts, provider, logger);
+    return result;
   } catch (error) {
     logger?.info(`BrainAgent Embeddings: ${provider.name} error — ${String(error)}`);
+    if (provider.name === "Ollama") ollamaUnreachable = true;
     return null;
   }
 }

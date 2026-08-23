@@ -456,6 +456,9 @@ export type BrainEventMap = {
   // ── Temporal Awareness events ─────────────────────────────────────
   "temporal:long-absence": { gapMs: number; subjectiveGap: number; temporalSurprise: number };
   "temporal:frequent-engagement": { density: number };
+
+  // ── Proactive feedback events ─────────────────────────────────────
+  "proactive:reaction": { domain: string; signal: string; hits: string[] };
 };
 
 export type BrainEventName = keyof BrainEventMap;
@@ -850,6 +853,8 @@ export type BrainAgentConfig = {
     emergentModules: boolean;
     /** Interoception (holistic inner-state sensing) */
     interoception: boolean;
+    /** Proactive Feedback (обучение на «не зашло» для автономных сообщений) */
+    proactiveFeedback: boolean;
   };
   /** Memory settings */
   memory: {
@@ -963,6 +968,23 @@ export type BrainAgentConfig = {
     lowPowerThreshold: number;
     /** Cycles between rebalancing */
     rebalanceInterval: number;
+  };
+  /** Proactive feedback settings (обучение на «не зашло») */
+  proactiveFeedback: {
+    /** Порог score подавления, после которого домен глушится */
+    suppressionThreshold: number;
+    /** Прирост score за прямое отвержение */
+    rejectionStep: number;
+    /** Прирост score за негативную (корректирующую) реакцию */
+    negativeStep: number;
+    /** Снижение score за позитивную реакцию */
+    positiveStep: number;
+    /** Затухание score подавления в день */
+    decayPerDay: number;
+    /** Время подавления домена после последнего отвержения, мс */
+    cooldownMs: number;
+    /** Максимум отслеживаемых доменов */
+    maxTrackedDomains: number;
   };
   /** Circadian rhythm settings (sleep-wake cycles) */
   circadian: {
@@ -1395,6 +1417,7 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
     metabolicBudget: true,
     emergentModules: true,
     interoception: true,
+    proactiveFeedback: true,
   },
   memory: {
     maxEpisodicMemories: 500,
@@ -1454,6 +1477,15 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
     regenRate: 0.5,
     lowPowerThreshold: 0.2,
     rebalanceInterval: 20,
+  },
+  proactiveFeedback: {
+    suppressionThreshold: 2,
+    rejectionStep: 1,
+    negativeStep: 0.5,
+    positiveStep: 0.5,
+    decayPerDay: 0.25, // раздражение забывается примерно за 8 дней
+    cooldownMs: 24 * 60 * 60 * 1000, // сутки подавления после отвержения
+    maxTrackedDomains: 20,
   },
   circadian: {
     enabled: true,

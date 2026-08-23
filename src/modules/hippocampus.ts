@@ -35,6 +35,7 @@ import type {
   SemanticMemory,
 } from "./types.ts";
 import { VectorIndex } from "./vector-engine.ts";
+import { atomicWrite } from "./persist.ts";
 
 // ── Storage paths ───────────────────────────────────────────────────
 
@@ -134,16 +135,47 @@ export function initEmbeddings(
  */
 export function updateEmbeddingsConfig(config: NeuroClawConfig): void {
   if (!embeddingsAvailable) {
-    // Embeddings weren't available at init — check if they are now
+    // Эмбеддингов не было на старте — проверяем, не появились ли они сейчас
     const provider = resolveEmbeddingProvider(config);
     if (provider) {
       embeddingsConfig = config;
       embeddingsAvailable = true;
-      return;
+      // Полноценная ленивая активация (v0.2.0): каталог, кэш, бэкфилл
+      embeddingsCacheDir = join(memoryDir, "..", "embeddings");
+      ensureDir(embeddingsCacheDir);
+      loadEmbeddingCache("episodic", embeddingCache.episodic);
+      loadEmbeddingCache("semantic", embeddingCache.semantic);
+      loadEmbeddingCache("procedural", embeddingCache.procedural);
+      scheduleEmbeddingBackfill();
+      embeddingsLogger?.info(
+        `BrainAgent Hippocampus: embeddings enabled via ${provider.name} (${provider.model}) — lazy activation`,
+      );
     }
     return;
   }
   embeddingsConfig = config;
+}
+
+/**
+ * Статус эмбеддингов для диагностики (/brainagent neuro, v0.2.0).
+ */
+export function getEmbeddingsStatus(): {
+  available: boolean;
+  provider: string;
+  model: string;
+  cached: { episodic: number; semantic: number; procedural: number };
+} {
+  const provider = embeddingsConfig ? resolveEmbeddingProvider(embeddingsConfig) : null;
+  return {
+    available: embeddingsAvailable && provider !== null,
+    provider: provider?.name ?? "—",
+    model: provider?.model ?? "—",
+    cached: {
+      episodic: embeddingCache.episodic.size,
+      semantic: embeddingCache.semantic.size,
+      procedural: embeddingCache.procedural.size,
+    },
+  };
 }
 
 function loadEmbeddingCache(layer: string, cache: Map<string, number[]>): void {
@@ -167,7 +199,8 @@ function saveEmbeddingCache(layer: string, cache: Map<string, number[]>): void {
     for (const [id, vec] of cache) {
       obj[id] = vec;
     }
-    writeFileSync(filePath, JSON.stringify(obj), "utf-8");
+    // Атомарно (tmp + rename): кэш не повреждается при прерывании (v0.2.0)
+    atomicWrite(filePath, JSON.stringify(obj));
   } catch {
     // Disk write failure
   }
