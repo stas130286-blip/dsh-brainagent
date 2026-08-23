@@ -21,8 +21,9 @@
  * own learning rates, thresholds, and behavior — just like real neurotransmitters.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cancelPersist, schedulePersist } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig, DopamineSignal, NeuromodulatorState } from "./types.ts";
 
@@ -58,6 +59,8 @@ export function initDopamineSystem(workspaceDir: string): void {
   if (!existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
+  // Отложенная запись прежнего экземпляра (пере-инициализация) больше не актуальна
+  cancelPersist(join(storageDir, "state.json"));
   loadState();
 }
 
@@ -88,26 +91,21 @@ function loadState(): void {
 
 function persistState(): void {
   if (!storageDir) return;
-  try {
-    writeFileSync(
-      join(storageDir, "state.json"),
-      JSON.stringify(
-        {
-          state,
-          expectedReward,
-          rewardHistory: rewardHistory.slice(-100), // Keep last 100
-          positiveOutcomeRatio,
-          noveltyCounter,
-          totalInteractions,
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-  } catch {
-    /* non-critical */
-  }
+  // Debounce + ленивый сериализатор: на диск уходит самое свежее состояние
+  schedulePersist(join(storageDir, "state.json"), () =>
+    JSON.stringify(
+      {
+        state,
+        expectedReward,
+        rewardHistory: rewardHistory.slice(-100), // Keep last 100
+        positiveOutcomeRatio,
+        noveltyCounter,
+        totalInteractions,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 // ── Core: Compute reward and distribute dopamine ────────────────────

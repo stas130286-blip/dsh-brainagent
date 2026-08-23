@@ -10,6 +10,7 @@ import { getCircadianStats, forcePhase } from "./circadian-rhythm.ts";
 import { getDopamineStats } from "./dopamine-system.ts";
 import { forceConsolidation, getDreamStats } from "./dream-mode.ts";
 import { getEmergentStats } from "./emergent-modules.ts";
+import { getInjectionMetrics } from "./injection-metrics.ts";
 import { getStats as getMemoryStats } from "./hippocampus.ts";
 import { getLearningStats } from "./learning-coordinator.ts";
 import { getMetabolicStats } from "./metabolic-budget.ts";
@@ -847,6 +848,11 @@ export function buildStatusReport(config: BrainAgentConfig): { text: string } {
     `  Vital Impulse (autonomous):   ${config.modules.vitalImpulse ? "ON" : "OFF"}`,
     `  Goal Executor (autonomous):   ${config.modules.goalStack ? "ON" : "OFF"}`,
     "",
+    "**Autonomic Modules:**",
+    `  Metabolic Budget (energy):     ${config.modules.metabolicBudget ? "ON" : "OFF"}`,
+    `  Emergent Modules (patterns):   ${config.modules.emergentModules ? "ON" : "OFF"}`,
+    `  Interoception (inner state):   ${config.modules.interoception ? "ON" : "OFF"}`,
+    "",
     "**Memory:**",
     `  Episodic memories:  ${memStats.episodic}`,
     `  Semantic facts:     ${memStats.semantic}`,
@@ -965,6 +971,18 @@ export function buildStatusReport(config: BrainAgentConfig): { text: string } {
       "**Goal Executor:**",
       `  Checks: ${ge.totalChecks}, Goals executed: ${ge.totalGoalsExecuted}`,
       `  Last heartbeat: ${ge.lastHeartbeatTime ? new Date(ge.lastHeartbeatTime).toLocaleString() : "never"}`,
+    );
+  }
+
+  // Prompt-injection volume metrics (0.1.2)
+  const im = getInjectionMetrics();
+  if (im.cycles > 0) {
+    lines.push(
+      "",
+      "**Context Injections:**",
+      `  Cycles: ${im.cycles}, Over budget: ${im.overBudgetCycles}`,
+      `  Avg: ${im.avgChars} chars (~${im.avgEstTokens} tokens), Max: ${im.maxChars} chars`,
+      `  Sections: avg ${im.avgSections}, max ${im.maxSections}`,
     );
   }
 

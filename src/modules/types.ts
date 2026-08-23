@@ -844,6 +844,12 @@ export type BrainAgentConfig = {
     thalamicGate: boolean;
     /** Autonomous Research (isolated web research with fact extraction) */
     autonomousResearch: boolean;
+    /** Metabolic Budget (energy-based resource allocation) */
+    metabolicBudget: boolean;
+    /** Emergent Modules (recurring co-activation pattern discovery) */
+    emergentModules: boolean;
+    /** Interoception (holistic inner-state sensing) */
+    interoception: boolean;
   };
   /** Memory settings */
   memory: {
@@ -1344,6 +1350,11 @@ export type BrainAgentConfig = {
     /** Tools to block in autonomous cycles (handled via before_tool_call) */
     blockedToolsInAutonomous: string[];
   };
+  /** Prompt-injection volume budget (diagnostics & attention-gate tuning) */
+  contextInjection: {
+    /** Max assembled context chars per cycle before over-budget warning */
+    maxChars: number;
+  };
 };
 
 export const DEFAULT_CONFIG: BrainAgentConfig = {
@@ -1381,6 +1392,9 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
     temporalAwareness: true,
     thalamicGate: true,
     autonomousResearch: true,
+    metabolicBudget: true,
+    emergentModules: true,
+    interoception: true,
   },
   memory: {
     maxEpisodicMemories: 500,
@@ -1703,6 +1717,7 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
     cooldownMs: 300_000, // 5 minutes between research cycles
     blockedToolsInAutonomous: ["web_search", "web_fetch", "exec"],
   },
+  contextInjection: { maxChars: 12_000 },
 };
 
 // ── Working Memory types ──────────────────────────────────────────

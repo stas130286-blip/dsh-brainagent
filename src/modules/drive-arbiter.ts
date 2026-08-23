@@ -25,8 +25,9 @@
  *    one drive from monopolizing all autonomous actions.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cancelPersist, flushPersist, schedulePersist } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type {
   BrainAgentConfig,
@@ -105,6 +106,9 @@ let lastSelectionTime = 0;
 let conflictLog: ConflictLogEntry[] = [];
 let totalArbitrations = 0;
 
+// Реентрантность-гард арбитража (сбрасывается в init и в finally)
+let isArbitrating = false;
+
 // ── Initialization ────────────────────────────────────────────────
 
 export function initDriveArbiter(
@@ -123,12 +127,15 @@ export function initDriveArbiter(
   lastSelectionTime = 0;
   conflictLog = [];
   totalArbitrations = 0;
+  isArbitrating = false;
   unsubscribers.length = 0;
 
   storageDir = join(workspaceDir, ".brainagent");
   if (!existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
+  // Отложенная запись прежнего экземпляра (пере-инициализация) больше не актуальна
+  cancelPersist(join(storageDir, "drive-arbiter.json"));
   loadState();
 
   // Listen to drive need-rising and urge events to trigger arbitration
@@ -165,6 +172,7 @@ export function stopDriveArbiter(): void {
   }
   unsubscribers.length = 0;
   persistState();
+  flushPersist(join(storageDir, "drive-arbiter.json"));
   logger?.info("BrainAgent DriveArbiter: stopped.");
 }
 
@@ -175,6 +183,19 @@ export function stopDriveArbiter(): void {
  * Emits arbiter:drive-selected and optionally arbiter:conflict-resolved.
  */
 function arbitrate(): void {
+  // Реентрантность-гард: bus.emit исполняет обработчики синхронно до
+  // первого await, поэтому слушатель arbiter:drive-selected может
+  // повторно запустить arbitrate() прямо внутри текущего арбитража.
+  if (!config || isArbitrating) return;
+  isArbitrating = true;
+  try {
+    arbitrateInner();
+  } finally {
+    isArbitrating = false;
+  }
+}
+
+function arbitrateInner(): void {
   if (!config) return;
   const cfg = config;
 
@@ -392,7 +413,8 @@ function loadState(): void {
 
 function persistState(): void {
   if (!storageDir) return;
-  try {
+  // Debounce + ленивый сериализатор: на диск уходит самое свежее состояние
+  schedulePersist(join(storageDir, "drive-arbiter.json"), () => {
     const data: PersistedState = {
       driveWeights,
       lastSelectedDrive,
@@ -400,10 +422,8 @@ function persistState(): void {
       conflictLog,
       totalArbitrations,
     };
-    writeFileSync(join(storageDir, "drive-arbiter.json"), JSON.stringify(data, null, 2), "utf-8");
-  } catch {
-    // Non-critical
-  }
+    return JSON.stringify(data, null, 2);
+  });
 }
 
 // ── Public API ────────────────────────────────────────────────────

@@ -23,8 +23,9 @@
  *  - cerebellum:validated проходит успешно
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cancelPersist, flushPersist, schedulePersist } from "./persist.ts";
 import { isInSleepPhase } from "./circadian-rhythm.ts";
 import { getNeuromodulatorState } from "./dopamine-system.ts";
 import { bus } from "./event-bus.ts";
@@ -123,6 +124,8 @@ export function initMasteryDrive(
   totalNeedSignals = 0;
   adaptiveDecayModifier = 1.0;
 
+  // Отложенная запись прежнего экземпляра (пере-инициализация) больше не актуальна
+  cancelPersist(join(storageDir, "state.json"));
   loadState();
 
   // No periodic decay timer. Decay is evaluated on-demand:
@@ -144,6 +147,7 @@ export function stopMasteryDrive(): void {
   }
   unsubscribers.length = 0;
   persistState();
+  flushPersist(join(storageDir, "state.json"));
   logger?.info("BrainAgent MasteryDrive: stopped.");
 }
 
@@ -668,8 +672,8 @@ function loadState(): void {
 }
 
 function persistState(): void {
-  try {
-    const filePath = join(storageDir, "state.json");
+  // Debounce + ленивый сериализатор: на диск уходит самое свежее состояние
+  schedulePersist(join(storageDir, "state.json"), () => {
     const domainMap: Record<string, DomainMastery> = {};
     for (const [domain, mastery] of domainSatiations) {
       domainMap[domain] = mastery;
@@ -681,8 +685,6 @@ function persistState(): void {
       totalImprovementRewards,
       totalNeedSignals,
     };
-    writeFileSync(filePath, JSON.stringify(state, null, 2));
-  } catch {
-    // Некритичная ошибка
-  }
+    return JSON.stringify(state, null, 2);
+  });
 }

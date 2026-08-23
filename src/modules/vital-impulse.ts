@@ -20,8 +20,9 @@
  *    higher during sleep (quieter).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cancelPersist, flushPersist, schedulePersist } from "./persist.ts";
 import { isInSleepPhase, isInWakePhase } from "./circadian-rhythm.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig, BrainEventName } from "./types.ts";
@@ -237,6 +238,8 @@ export function initVitalImpulse(
   adaptiveSignalWeights = { ...DEFAULT_SIGNAL_WEIGHTS, ...config.signalWeights };
   hebbianLearningRate = cfg.synapticPlasticity?.learningRate ?? 0.1;
 
+  // Отложенная запись прежнего экземпляра (пере-инициализация) больше не актуальна
+  cancelPersist(join(storageDir, "state.json"));
   loadState();
 
   // No decay timer — pressure decays on-demand when new signals arrive.
@@ -257,6 +260,7 @@ export function stopVitalImpulse(): void {
   }
   unsubscribers.length = 0;
   persistState();
+  flushPersist(join(storageDir, "state.json"));
   logger?.info("BrainAgent VitalImpulse: stopped.");
 }
 
@@ -823,8 +827,8 @@ function loadState(): void {
 }
 
 function persistState(): void {
-  try {
-    const filePath = join(storageDir, "state.json");
+  // Debounce + ленивый сериализатор: на диск уходит самое свежее состояние
+  schedulePersist(join(storageDir, "state.json"), () => {
     const state: PersistedState = {
       lastFireTime,
       totalFires,
@@ -833,8 +837,6 @@ function persistState(): void {
       consecutiveAutonomousFires,
       adaptiveSignalWeights,
     };
-    writeFileSync(filePath, JSON.stringify(state, null, 2));
-  } catch {
-    // Non-critical
-  }
+    return JSON.stringify(state, null, 2);
+  });
 }

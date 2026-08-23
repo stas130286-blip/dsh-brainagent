@@ -240,6 +240,7 @@ import {
   endCycle as endMetabolicCycle,
 } from "./modules/metabolic-budget.ts";
 import { initEmergentModules, recordPattern as recordEmergentPattern } from "./modules/emergent-modules.ts";
+import { recordInjectionCycle } from "./modules/injection-metrics.ts";
 import { initThalamicGate, getThalamicGateStats } from "./modules/thalamic-gate.ts";
 import { generateQualiaAsync } from "./modules/emotional-memory.ts";
 import { getWorkingMemoryStats } from "./modules/working-memory.ts";
@@ -323,6 +324,12 @@ export interface Config {
     qualiaSimulator: boolean;
     temporalAwareness: boolean;
     thalamicGate: boolean;
+    /** Metabolic Budget (energy-based resource allocation) */
+    metabolicBudget: boolean;
+    /** Emergent Modules (recurring co-activation patterns) */
+    emergentModules: boolean;
+    /** Interoception (holistic inner-state sensing) */
+    interoception: boolean;
     commands: boolean;
   };
   /** Circadian rhythm (sleep-wake cycles). */
@@ -337,6 +344,8 @@ export interface Config {
     episodicLimit: number;
     semanticLimit: number;
   };
+  /** Prompt-injection volume budget for diagnostics & attention-gate tuning. */
+  contextInjection: { maxChars: number };
   /** Minimum gap between proactive (autonomous) messages, ms. */
   autonomousMinGapMs: number;
 }
@@ -388,6 +397,9 @@ export const Config: Schema<Config> = Schema.object({
     qualiaSimulator: Schema.boolean().default(true).description("Subjective experience simulation"),
     temporalAwareness: Schema.boolean().default(true).description("Subjective sense of time passing"),
     thalamicGate: Schema.boolean().default(true).description("Neural activation threshold stats"),
+    metabolicBudget: Schema.boolean().default(true).description("Metabolic budget — energy-based resource allocation"),
+    emergentModules: Schema.boolean().default(true).description("Emergent modules — recurring co-activation patterns"),
+    interoception: Schema.boolean().default(true).description("Interoception — holistic inner-state sensing"),
     commands: Schema.boolean().default(true).description("/brain diagnostics command"),
   }).default({
     thalamus: true,
@@ -427,6 +439,9 @@ export const Config: Schema<Config> = Schema.object({
     qualiaSimulator: true,
     temporalAwareness: true,
     thalamicGate: true,
+    metabolicBudget: true,
+    emergentModules: true,
+    interoception: true,
     commands: true,
   }),
   circadian: Schema.object({
@@ -440,6 +455,11 @@ export const Config: Schema<Config> = Schema.object({
     episodicLimit: Schema.number().default(3),
     semanticLimit: Schema.number().default(5),
   }).default({ episodicLimit: 3, semanticLimit: 5 }),
+  contextInjection: Schema.object({
+    maxChars: Schema.number()
+      .default(12_000)
+      .description("Over-budget warning threshold for assembled prompt-injection chars"),
+  }).default({ maxChars: 12_000 }),
   autonomousMinGapMs: Schema.number()
     .default(10 * 60 * 1000)
     .description("Minimum gap between proactive (autonomous) messages, ms"),
@@ -553,6 +573,9 @@ function mergeBrainConfig(config: Config): BrainAgentConfig {
       qualiaSimulator: config.modules.qualiaSimulator,
       temporalAwareness: config.modules.temporalAwareness,
       thalamicGate: config.modules.thalamicGate,
+      metabolicBudget: config.modules.metabolicBudget,
+      emergentModules: config.modules.emergentModules,
+      interoception: config.modules.interoception,
     },
     dualProcess: {
       ...DEFAULT_CONFIG.dualProcess,
@@ -562,6 +585,10 @@ function mergeBrainConfig(config: Config): BrainAgentConfig {
     circadian: {
       ...DEFAULT_CONFIG.circadian,
       enabled: config.circadian.enabled,
+    },
+    contextInjection: {
+      ...DEFAULT_CONFIG.contextInjection,
+      ...config.contextInjection,
     },
   };
 }
@@ -974,12 +1001,15 @@ export function apply(ctx: Context, config: Config) {
 
   // ── Phase 4: service & consciousness layers ─────────────────
 
-  // Metabolic Budget: energy-based resource allocation (unconditional,
-  // like in the original — consumeEnergy calls are spread across hooks).
-  initMetabolicBudget(dataDir, brainConfig, logger);
+  // Metabolic Budget: energy-based resource allocation.
+  if (brainConfig.modules.metabolicBudget) {
+    initMetabolicBudget(dataDir, brainConfig, logger);
+  }
 
   // Emergent modules: recurring co-activation pattern discovery.
-  initEmergentModules(dataDir, brainConfig, logger);
+  if (brainConfig.modules.emergentModules) {
+    initEmergentModules(dataDir, brainConfig, logger);
+  }
 
   if (brainConfig.modules.introspection) {
     initIntrospection(dataDir, brainConfig);
@@ -998,25 +1028,26 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // Interoception: holistic inner-state sensing. Subscribes to the
-  // dopamine reward + vital impulse bus events by itself (unconditional,
-  // like in the original).
-  initInteroception(
-    {
-      getSocialDriveStats: brainConfig.modules.socialDrive ? getSocialDriveStats : undefined,
-      getCognitiveHungerStats: brainConfig.modules.cognitiveHunger
-        ? getCognitiveHungerStats
-        : undefined,
-      getCreativeDriveStats: brainConfig.modules.creativeDrive
-        ? getCreativeDriveStats
-        : undefined,
-      getMasteryDriveStats: brainConfig.modules.masteryDrive ? getMasteryDriveStats : undefined,
-      getVitalImpulseStats: brainConfig.modules.vitalImpulse ? getVitalImpulseStats : undefined,
-      getNeuromodulatorState: brainConfig.modules.neuromodulatorSystem
-        ? getNeuromodulatorState
-        : undefined,
-    },
-    logger,
-  );
+  // dopamine reward + vital impulse bus events by itself.
+  if (brainConfig.modules.interoception) {
+    initInteroception(
+      {
+        getSocialDriveStats: brainConfig.modules.socialDrive ? getSocialDriveStats : undefined,
+        getCognitiveHungerStats: brainConfig.modules.cognitiveHunger
+          ? getCognitiveHungerStats
+          : undefined,
+        getCreativeDriveStats: brainConfig.modules.creativeDrive
+          ? getCreativeDriveStats
+          : undefined,
+        getMasteryDriveStats: brainConfig.modules.masteryDrive ? getMasteryDriveStats : undefined,
+        getVitalImpulseStats: brainConfig.modules.vitalImpulse ? getVitalImpulseStats : undefined,
+        getNeuromodulatorState: brainConfig.modules.neuromodulatorSystem
+          ? getNeuromodulatorState
+          : undefined,
+      },
+      logger,
+    );
+  }
 
   // Thalamic Gate: activation-threshold stats. In dsh there are no
   // interval heartbeats — every cycle is user- or event-driven and
@@ -1163,7 +1194,7 @@ export function apply(ctx: Context, config: Config) {
       if (brainConfig.modules.actionDispatcher) stopAutonomyEnricher();
       if (brainConfig.modules.driveArbiter) stopDriveArbiter();
       if (brainConfig.modules.autonomousResearch) stopAutonomousResearch();
-      stopInteroception();
+      if (brainConfig.modules.interoception) stopInteroception();
       if (brainConfig.modules.temporalAwareness) stopTemporalAwareness();
     };
   });
@@ -1218,7 +1249,9 @@ export function apply(ctx: Context, config: Config) {
       `temporalBinding=${brainConfig.modules.temporalBinding} ` +
       `qualia=${brainConfig.modules.qualiaSimulator} ` +
       `temporalAwareness=${brainConfig.modules.temporalAwareness} ` +
-      `interoception=true metabolic=true emergent=true ` +
+      `interoception=${brainConfig.modules.interoception} ` +
+      `metabolic=${brainConfig.modules.metabolicBudget} ` +
+      `emergent=${brainConfig.modules.emergentModules} ` +
       `thalamicGate=${brainConfig.modules.thalamicGate} ` +
       `commands=${config.modules.commands}`,
   );
@@ -1228,7 +1261,9 @@ export function apply(ctx: Context, config: Config) {
       markModuleActivation(module);
     }
     // Metabolic budget: every module activation spends energy.
-    consumeEnergy(module);
+    if (brainConfig.modules.metabolicBudget) {
+      consumeEnergy(module);
+    }
   };
 
   function startCycle(key: string, text: string): CycleState {
@@ -1604,7 +1639,7 @@ export function apply(ctx: Context, config: Config) {
       if (brainConfig.modules.basalGanglia) participatingModules.push("basalGanglia");
 
       // Emergent modules: recurring co-activation patterns worth bundling.
-      if (participatingModules.length >= 2 && reward > 0.3) {
+      if (brainConfig.modules.emergentModules && participatingModules.length >= 2 && reward > 0.3) {
         recordEmergentPattern(
           participatingModules,
           cycle.classification?.domain ?? "unknown",
@@ -1613,10 +1648,12 @@ export function apply(ctx: Context, config: Config) {
       }
 
       // Metabolic budget: record per-module performance, regenerate energy.
-      for (const module of participatingModules) {
-        recordPerformance(module, reward);
+      if (brainConfig.modules.metabolicBudget) {
+        for (const module of participatingModules) {
+          recordPerformance(module, reward);
+        }
+        endMetabolicCycle();
       }
-      endMetabolicCycle();
 
       // Agent identity: per-domain capability self-knowledge.
       if (brainConfig.modules.agentIdentity && cycle.classification) {
@@ -2153,8 +2190,10 @@ export function apply(ctx: Context, config: Config) {
     }
 
     // Interoception: holistic inner state.
-    const interoCtx = buildInteroceptionContext();
-    if (interoCtx) injections.push(interoCtx);
+    if (brainConfig.modules.interoception) {
+      const interoCtx = buildInteroceptionContext();
+      if (interoCtx) injections.push(interoCtx);
+    }
 
     // Temporal awareness: subjective sense of time passing.
     if (brainConfig.modules.temporalAwareness) {
@@ -2179,6 +2218,16 @@ export function apply(ctx: Context, config: Config) {
     };
 
     const contextText = assembleContext(state).trim();
+
+    // Injection metrics: сколько внутреннего контекста реально ушло в модель
+    const injectionBudget = brainConfig.contextInjection.maxChars;
+    recordInjectionCycle(filtered.length, contextText.length, injectionBudget);
+    if (contextText.length > injectionBudget) {
+      logger.info(
+        `BrainAgent: context injections over budget (${contextText.length} > ${injectionBudget} chars) — attention gate may need tuning`,
+      );
+    }
+
     if (!contextText) return decision;
 
     // Appended to the admitted batch → logged as a durable user/message,
