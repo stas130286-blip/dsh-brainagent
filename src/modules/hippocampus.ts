@@ -497,7 +497,10 @@ export function storeFact(
     }
   }
 
-  // Check for contradiction — same subject, different claim (memory reconsolidation)
+  // Check for contradiction — same subject, different claim (memory reconsolidation).
+  // Track the pending queue length so Tier-2 entries queued during this call
+  // can be backfilled with the new fact's id once it exists.
+  const pendingBefore = pendingContradictions.length;
   const contradiction = detectContradiction(content, category);
   if (contradiction && contradiction.confidence >= 0.7) {
     return reviseFact(
@@ -522,6 +525,12 @@ export function storeFact(
   semanticStore.push(fact);
   semanticIndex.add(fact.id, `${content} ${category}`);
   semanticVersion++;
+
+  // Backfill newFactId on Tier-2 contradictions queued by detectContradiction —
+  // dream-mode consolidation needs the link between the new and existing facts.
+  for (let i = pendingBefore; i < pendingContradictions.length; i++) {
+    pendingContradictions[i].newFactId = fact.id;
+  }
 
   // Schedule background embedding computation
   if (embeddingsAvailable && embeddingsConfig) {
@@ -661,7 +670,7 @@ export function detectContradiction(
       const existing = sameCategoryFacts.find((f) => f.id === match.id);
       if (existing) {
         pendingContradictions.push({
-          newFactId: "", // Will be set after fact is created
+          newFactId: "", // Backfilled by storeFact once the fact exists
           existingFactId: existing.id,
           similarity: match.score,
         });

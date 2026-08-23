@@ -16,3 +16,4 @@ cordis.yml
 *.log
 *.tmp
 .DS_Store
+*.tgz

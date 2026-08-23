@@ -32,6 +32,19 @@ type ChatResponse = {
   }>;
 };
 
+/** Abort in-flight enrichment calls so a hung provider can't block the cycle. */
+const LLM_REQUEST_TIMEOUT_MS = 60_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LLM_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Parse the user's selected model from config (agents.defaults.model).
  * Returns { provider, model } or null if not configured.
@@ -273,7 +286,7 @@ export async function callLLM(
     let response: Response;
 
     if (provider.bodyFormat === "anthropic") {
-      response = await fetch(`${provider.baseUrl}/messages`, {
+      response = await fetchWithTimeout(`${provider.baseUrl}/messages`, {
         method: "POST",
         headers: provider.headers,
         body: JSON.stringify({
@@ -285,7 +298,7 @@ export async function callLLM(
       });
     } else if (provider.name === "Google") {
       const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         method: "POST",
         headers: provider.headers,
         body: JSON.stringify({
@@ -307,7 +320,7 @@ export async function callLLM(
       logger?.info(`BrainAgent LLM: Google error ${response.status}: ${errorText}`);
       return null;
     } else {
-      response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      response = await fetchWithTimeout(`${provider.baseUrl}/chat/completions`, {
         method: "POST",
         headers: provider.headers,
         body: JSON.stringify({

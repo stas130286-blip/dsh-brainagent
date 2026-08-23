@@ -219,7 +219,10 @@ export function initVitalImpulse(
   logger = log;
   deps = injectedDeps;
 
-  // Reset in-memory state
+  // Reset in-memory state (loadState restores persisted values below)
+  lastFireTime = 0;
+  totalFires = 0;
+  totalSignalsReceived = 0;
   currentPressure = 0;
   recentSignals = [];
   habituationLevel = 0;
@@ -543,6 +546,13 @@ function evaluateFiring(): void {
 
   const now = Date.now();
 
+  // Hard refractory guard: minimal cooldown after any fire. Habituation and GABA
+  // are the real limiters, but a burst of strong signals must not machine-gun
+  // fires within the configured cooldown window.
+  if (lastFireTime > 0 && now - lastFireTime < config.refractoryPeriodMs) {
+    return;
+  }
+
   // Compute effective threshold with circadian modulation
   let effectiveThreshold = config.firingThreshold;
   if (circadianEnabled) {
@@ -709,6 +719,11 @@ export function forceImpulse(reason?: string): void {
 
   lastFireTime = Date.now();
   totalFires++;
+  // Count forced fires against anti-spam too — otherwise repeated forcing
+  // bypasses habituation/GABA and the next organic fire comes too easily.
+  consecutiveAutonomousFires++;
+  habituationLevel += 0.5;
+  gabaInhibitionLevel += 3.0;
   currentPressure = 0;
   recentSignals = [];
 
@@ -765,6 +780,10 @@ export function getVitalImpulseStats(): VitalImpulseStats {
   // Include habituation in the reported threshold
   effectiveThreshold *= 1 + habituationLevel;
 
+  const refractoryMs = config?.refractoryPeriodMs ?? 0;
+  const sinceFire = lastFireTime > 0 ? Date.now() - lastFireTime : Number.POSITIVE_INFINITY;
+  const isInRefractory = sinceFire < refractoryMs;
+
   return {
     currentPressure,
     effectiveThreshold,
@@ -772,8 +791,8 @@ export function getVitalImpulseStats(): VitalImpulseStats {
     totalFires,
     totalSignalsReceived,
     recentSignalCount: recentSignals.length,
-    isInRefractory: false,
-    refractoryRemainingMs: 0,
+    isInRefractory,
+    refractoryRemainingMs: isInRefractory ? refractoryMs - sinceFire : 0,
   };
 }
 

@@ -116,6 +116,9 @@ export function initSocialDrive(
   lastDecayEvaluationTime = Date.now();
   currentNeedLevel = "none";
   socialInteractionHistory = [];
+  lastSocialInteractionTime = 0;
+  totalSocialRewards = 0;
+  totalNeedSignals = 0;
   unsubscribers.length = 0;
   lastDesireUpdateTime = 0;
   lastDMNBiasTime = 0;

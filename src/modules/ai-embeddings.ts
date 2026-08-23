@@ -5,7 +5,7 @@
  * "тачка" and "машина" will have similar vectors even though they're
  * different words — because they mean the same thing.
  *
- * Supports: OpenAI, Google, Ollama, DeepSeek (OpenAI-compatible), Groq, OpenRouter.
+ * Supports: OpenAI, Google, Ollama, OpenRouter (providers with an embeddings API).
  * Falls back gracefully if no provider is available.
  */
 

@@ -116,6 +116,9 @@ export function initCreativeDrive(
   lastDecayEvaluationTime = Date.now();
   currentNeedLevel = "none";
   creativeInteractionHistory = [];
+  lastCreativeInteractionTime = 0;
+  totalCreativeRewards = 0;
+  totalNeedSignals = 0;
   unsubscribers.length = 0;
   lastDesireUpdateTime = 0;
   lastDMNBiasTime = 0;

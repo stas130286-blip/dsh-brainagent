@@ -116,6 +116,9 @@ export function initCognitiveHunger(
   lastDecayEvaluationTime = Date.now();
   currentNeedLevel = "none";
   learningInteractionHistory = [];
+  lastLearningInteractionTime = 0;
+  totalLearningRewards = 0;
+  totalNeedSignals = 0;
   unsubscribers.length = 0;
   lastDesireUpdateTime = 0;
   lastDMNBiasTime = 0;
