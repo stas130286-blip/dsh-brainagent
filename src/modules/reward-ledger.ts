@@ -37,6 +37,21 @@ export type RewardEntry = {
   context?: string;
 };
 
+export type RewardLedgerInstance = {
+  /** Записать награду в журнал (клампится к [-1, 1]; нули не пишутся). */
+  record(source: RewardSource, contribution: number, context?: string): void;
+  /** Последние n записей журнала (по умолчанию 20). */
+  getRecentEntries(n?: number): RewardEntry[];
+  /** Средняя награда по последним n записям (0 при пустом журнале). */
+  getAverageReward(n?: number): number;
+  /** Сводная статистика журнала. */
+  getStats(): { entries: number; averageReward: number; lastEntryTimestamp: number };
+  /** Отписаться от шины и сбросить отложенную персистенцию. */
+  stop(): void;
+  /** Тихий вариант stop (для замены инстанса). */
+  dispose(): void;
+};
+
 // ── Единая функция награды ────────────────────────────────────────
 // Веса источников: прямой сигнал пользователя весит больше всего,
 // внутренние оценки — меньше. Вклад каждого источника уже нормирован
@@ -62,37 +77,83 @@ function clampReward(value: number): number {
   return Math.max(-1, Math.min(1, value));
 }
 
-// ── Состояние модуля ──────────────────────────────────────────────
+// ── Фабрика ───────────────────────────────────────────────────────
 
-let storageFile = "";
-let entries: RewardEntry[] = [];
-let maxEntries = 500;
-let idCounter = 0;
-let unsubscribers: Array<() => void> = [];
-let initialized = false;
-
-// ── Инициализация ─────────────────────────────────────────────────
-
-export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig): void {
-  stopRewardLedger();
-
+export function createRewardLedger(
+  workspaceDir: string,
+  config: BrainAgentConfig,
+): RewardLedgerInstance {
   const storageDir = join(workspaceDir, ".brainagent", "reward");
   if (!existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
-  storageFile = join(storageDir, "ledger.json");
+  const storageFile = join(storageDir, "ledger.json");
   cancelPersist(storageFile);
-  maxEntries = config.learningLoop.rewardLedger.maxEntries;
+  const maxEntries = config.learningLoop.rewardLedger.maxEntries;
 
-  entries = [];
-  idCounter = 0;
-  loadLedger();
+  let entries: RewardEntry[] = [];
+  let idCounter = 0;
+
+  // Загрузка журнала
+  if (existsSync(storageFile)) {
+    try {
+      const data = JSON.parse(readFileSync(storageFile, "utf-8")) as {
+        entries?: RewardEntry[];
+      };
+      entries = Array.isArray(data.entries) ? data.entries.slice(-maxEntries) : [];
+      idCounter = entries.length;
+    } catch {
+      /* fresh start */
+    }
+  }
+
+  function persistLedger(): void {
+    schedulePersist(storageFile, () => JSON.stringify({ entries }, null, 2));
+  }
+
+  function record(source: RewardSource, contribution: number, context?: string): void {
+    const reward = clampReward(contribution);
+    if (Math.abs(reward) < 1e-9) return;
+
+    entries.push({
+      id: `rw_${Date.now()}_${++idCounter}`,
+      timestamp: Date.now(),
+      reward: Math.round(reward * 1000) / 1000,
+      source,
+      ...(context !== undefined ? { context } : {}),
+    });
+
+    if (entries.length > maxEntries) {
+      entries = entries.slice(-maxEntries);
+    }
+
+    persistLedger();
+
+    bus.emitSync("reward:recorded", {
+      reward,
+      source,
+      ...(context !== undefined ? { context } : {}),
+    });
+  }
+
+  function getRecentEntries(n = 20): RewardEntry[] {
+    return entries.slice(-n);
+  }
+
+  function getAverageReward(n = 50): number {
+    const recent = entries.slice(-n);
+    if (recent.length === 0) return 0;
+    return recent.reduce((sum, e) => sum + e.reward, 0) / recent.length;
+  }
+
+  // Подписки на шину
+  const unsubscribers: Array<() => void> = [];
 
   // Дофаминовая награда нейромодуляторной системы
   unsubscribers.push(
     bus.on("dopamine:reward", (signal) => {
       const contribution = clampReward(signal.reward) * SOURCE_WEIGHTS.dopamine;
-      recordReward("dopamine", contribution, signal.context.domain);
+      record("dopamine", contribution, signal.context.domain);
     }),
   );
 
@@ -101,7 +162,7 @@ export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig)
     bus.on("proactive:reaction", (data) => {
       const raw = PROACTIVE_SIGNAL_VALUE[data.signal] ?? 0;
       if (raw === 0) return;
-      recordReward("proactive-reaction", raw * SOURCE_WEIGHTS["proactive-reaction"], data.domain);
+      record("proactive-reaction", raw * SOURCE_WEIGHTS["proactive-reaction"], data.domain);
     }),
   );
 
@@ -110,11 +171,7 @@ export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig)
     bus.on("basal:reinforced", (data) => {
       if (data.signal === "neutral") return;
       const raw = data.signal === "positive" ? 1 : -1;
-      recordReward(
-        "basal-reinforcement",
-        raw * SOURCE_WEIGHTS["basal-reinforcement"],
-        data.habitId,
-      );
+      record("basal-reinforcement", raw * SOURCE_WEIGHTS["basal-reinforcement"], data.habitId);
     }),
   );
 
@@ -122,10 +179,7 @@ export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig)
   unsubscribers.push(
     bus.on("cerebellum:validated", (data) => {
       const raw = data.passed ? 1 : -1.3; // провал валидации весит чуть больше
-      recordReward(
-        "cerebellum-validation",
-        clampReward(raw) * SOURCE_WEIGHTS["cerebellum-validation"],
-      );
+      record("cerebellum-validation", clampReward(raw) * SOURCE_WEIGHTS["cerebellum-validation"]);
     }),
   );
 
@@ -133,7 +187,7 @@ export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig)
   unsubscribers.push(
     bus.on("pathway:prediction-validated", (data) => {
       const raw = data.wasCorrect ? 1 : -1;
-      recordReward(
+      record(
         "prediction-validation",
         raw * SOURCE_WEIGHTS["prediction-validation"],
         data.predictionTopic,
@@ -141,62 +195,65 @@ export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig)
     }),
   );
 
-  initialized = true;
+  function unsubscribe(): void {
+    for (const unsub of unsubscribers) {
+      unsub();
+    }
+    unsubscribers.length = 0;
+  }
+
+  return {
+    record,
+    getRecentEntries,
+    getAverageReward,
+    getStats: () => ({
+      entries: entries.length,
+      averageReward: getAverageReward(),
+      lastEntryTimestamp: entries.length > 0 ? entries[entries.length - 1].timestamp : 0,
+    }),
+    stop: () => {
+      unsubscribe();
+      flushPersist(storageFile);
+    },
+    dispose: () => {
+      unsubscribe();
+      flushPersist(storageFile);
+    },
+  };
+}
+
+// ── Активный инстанс (слот) ───────────────────────────────────────
+
+let active: RewardLedgerInstance | undefined;
+
+// ── Совместимый API ───────────────────────────────────────────────
+
+export function initRewardLedger(workspaceDir: string, config: BrainAgentConfig): void {
+  active?.dispose();
+  active = createRewardLedger(workspaceDir, config);
 }
 
 export function stopRewardLedger(): void {
-  for (const unsub of unsubscribers) {
-    unsub();
-  }
-  unsubscribers = [];
-  if (storageFile) {
-    flushPersist(storageFile);
-  }
-  storageFile = "";
-  initialized = false;
+  active?.stop();
+  active = undefined;
 }
-
-// ── Ядро ──────────────────────────────────────────────────────────
 
 /**
  * Записать награду в журнал. Вклад клампится к [-1, 1]; нулевые
- * вклады не пишутся (нет сигнала — нет записи).
+ * вклады не пишутся (нет сигнала — нет записи). До инициализации — no-op.
  */
 export function recordReward(source: RewardSource, contribution: number, context?: string): void {
-  const reward = clampReward(contribution);
-  if (Math.abs(reward) < 1e-9) return;
-
-  entries.push({
-    id: `rw_${Date.now()}_${++idCounter}`,
-    timestamp: Date.now(),
-    reward: Math.round(reward * 1000) / 1000,
-    source,
-    ...(context !== undefined ? { context } : {}),
-  });
-
-  if (entries.length > maxEntries) {
-    entries = entries.slice(-maxEntries);
-  }
-
-  persistLedger();
-
-  bus.emitSync("reward:recorded", {
-    reward,
-    source,
-    ...(context !== undefined ? { context } : {}),
-  });
+  active?.record(source, contribution, context);
 }
 
 /** Последние n записей журнала (по умолчанию 20). */
 export function getRecentEntries(n = 20): RewardEntry[] {
-  return entries.slice(-n);
+  return active?.getRecentEntries(n) ?? [];
 }
 
 /** Средняя награда по последним n записям (0 при пустом журнале). */
 export function getAverageReward(n = 50): number {
-  const recent = entries.slice(-n);
-  if (recent.length === 0) return 0;
-  return recent.reduce((sum, e) => sum + e.reward, 0) / recent.length;
+  return active?.getAverageReward(n) ?? 0;
 }
 
 /** Сводная статистика журнала. */
@@ -205,34 +262,16 @@ export function getRewardLedgerStats(): {
   averageReward: number;
   lastEntryTimestamp: number;
 } {
-  return {
-    entries: entries.length,
-    averageReward: getAverageReward(),
-    lastEntryTimestamp: entries.length > 0 ? entries[entries.length - 1].timestamp : 0,
-  };
-}
-
-// ── Персистентность ───────────────────────────────────────────────
-
-function loadLedger(): void {
-  if (!storageFile || !existsSync(storageFile)) return;
-  try {
-    const data = JSON.parse(readFileSync(storageFile, "utf-8")) as {
-      entries?: RewardEntry[];
-    };
-    entries = Array.isArray(data.entries) ? data.entries.slice(-maxEntries) : [];
-    idCounter = entries.length;
-  } catch {
-    /* fresh start */
-  }
-}
-
-function persistLedger(): void {
-  if (!storageFile) return;
-  schedulePersist(storageFile, () => JSON.stringify({ entries }, null, 2));
+  return (
+    active?.getStats() ?? {
+      entries: 0,
+      averageReward: 0,
+      lastEntryTimestamp: 0,
+    }
+  );
 }
 
 /** Журнал инициализирован (для guard-проверок в тестах/потребителях). */
 export function isRewardLedgerInitialized(): boolean {
-  return initialized;
+  return active !== undefined;
 }

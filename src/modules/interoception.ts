@@ -78,124 +78,191 @@ type DriveStatGetters = {
   };
 };
 
-// ── Module state ──────────────────────────────────────────────────
+export type InteroceptionInstance = {
+  /** Пересчитать интероцептивное состояние по текущим сигналам. */
+  evaluate(): void;
+  /** Последнее вычисленное состояние (null до первой оценки). */
+  getState(): InteroceptiveState | null;
+  /** Контекст для промпта (null, если состояния ещё нет). */
+  buildContext(): string | null;
+  /** Отписаться от шины. */
+  stop(): void;
+  /** Тихий вариант stop (для замены инстанса). */
+  dispose(): void;
+};
 
-let statGetters: DriveStatGetters = {};
-let logger: { info: (msg: string) => void } | undefined;
-let lastState: InteroceptiveState | null = null;
-const unsubscribers: Array<() => void> = [];
+// ── Фабрика ───────────────────────────────────────────────────────
 
-// ── Initialization ────────────────────────────────────────────────
+export function createInteroception(
+  getters: DriveStatGetters,
+  log?: { info: (msg: string) => void },
+): InteroceptionInstance {
+  let lastState: InteroceptiveState | null = null;
+  const unsubscribers: Array<() => void> = [];
+
+  function evaluate(): void {
+    const social = getters.getSocialDriveStats?.();
+    const cognitive = getters.getCognitiveHungerStats?.();
+    const creative = getters.getCreativeDriveStats?.();
+    const mastery = getters.getMasteryDriveStats?.();
+    const impulse = getters.getVitalImpulseStats?.();
+    const neuro = getters.getNeuromodulatorState?.();
+
+    // Drive needs (0 = fully satiated, 1 = starving)
+    const socialNeed = social ? social.need : 0;
+    const cognitiveNeed = cognitive ? cognitive.need : 0;
+    const creativeNeed = creative ? creative.need : 0;
+    const masteryNeed = mastery ? mastery.need : 0;
+
+    const pressure = impulse?.currentPressure ?? 0;
+    const dopamine = neuro?.dopamine ?? 0.5;
+    const serotonin = neuro?.serotonin ?? 0.5;
+    const norepinephrine = neuro?.norepinephrine ?? 0.5;
+    const acetylcholine = neuro?.acetylcholine ?? 0.5;
+
+    const aggregateNeed = (socialNeed + cognitiveNeed + creativeNeed + masteryNeed) / 4;
+
+    // Classify pattern
+    const { pattern, confidence, description } = classifyPattern({
+      socialNeed,
+      cognitiveNeed,
+      creativeNeed,
+      masteryNeed,
+      aggregateNeed,
+      pressure,
+      dopamine,
+      serotonin,
+      norepinephrine,
+      acetylcholine,
+    });
+
+    const state: InteroceptiveState = {
+      pattern,
+      confidence,
+      description,
+      driveNeeds: {
+        social: socialNeed,
+        cognitive: cognitiveNeed,
+        creative: creativeNeed,
+        mastery: masteryNeed,
+      },
+      aggregateNeed,
+      pressure,
+      timestamp: Date.now(),
+    };
+
+    // Only emit if pattern changed or confidence shifted significantly
+    const changed =
+      !lastState ||
+      lastState.pattern !== state.pattern ||
+      Math.abs(lastState.confidence - state.confidence) > 0.15;
+
+    lastState = state;
+
+    if (changed) {
+      bus.emitSync("interoception:state-updated", {
+        pattern: state.pattern,
+        confidence: state.confidence,
+        description: state.description,
+        aggregateNeed: state.aggregateNeed,
+      });
+
+      log?.info(
+        `BrainAgent Interoception: ${state.pattern} (confidence=${(state.confidence * 100).toFixed(0)}%) — ${state.description}`,
+      );
+    }
+  }
+
+  // Re-evaluate interoceptive state after each dopamine reward cycle
+  // (the natural "check-in" moment when the brain assesses how things went)
+  unsubscribers.push(
+    bus.on("dopamine:reward", () => {
+      evaluate();
+    }),
+  );
+
+  // Also evaluate when vital impulse fires (significant internal event)
+  unsubscribers.push(
+    bus.on("vital-impulse:fired", () => {
+      evaluate();
+    }),
+  );
+
+  function unsubscribe(): void {
+    for (const unsub of unsubscribers) {
+      unsub();
+    }
+    unsubscribers.length = 0;
+  }
+
+  log?.info("BrainAgent Interoception: initialized");
+
+  return {
+    evaluate,
+    getState: () => lastState,
+    buildContext: () => {
+      if (!lastState) return null;
+
+      const driveLines: string[] = [];
+      const { driveNeeds } = lastState;
+      if (driveNeeds.social > 0.4)
+        driveLines.push(`социальная потребность: ${(driveNeeds.social * 100).toFixed(0)}%`);
+      if (driveNeeds.cognitive > 0.4)
+        driveLines.push(`познавательный голод: ${(driveNeeds.cognitive * 100).toFixed(0)}%`);
+      if (driveNeeds.creative > 0.4)
+        driveLines.push(`творческий порыв: ${(driveNeeds.creative * 100).toFixed(0)}%`);
+      if (driveNeeds.mastery > 0.4)
+        driveLines.push(`стремление к мастерству: ${(driveNeeds.mastery * 100).toFixed(0)}%`);
+
+      const parts = [`Внутреннее состояние: ${lastState.description}`];
+      if (driveLines.length > 0) {
+        parts.push(`Активные потребности: ${driveLines.join(", ")}`);
+      }
+
+      return parts.join("\n");
+    },
+    stop: () => {
+      unsubscribe();
+      log?.info("BrainAgent Interoception: stopped.");
+    },
+    dispose: () => {
+      unsubscribe();
+    },
+  };
+}
+
+// ── Активный инстанс (слот) ───────────────────────────────────────
+
+let active: InteroceptionInstance | undefined;
+
+// ── Совместимый API ───────────────────────────────────────────────
 
 export function initInteroception(
   getters: DriveStatGetters,
   log?: { info: (msg: string) => void },
 ): void {
-  statGetters = getters;
-  logger = log;
-  lastState = null;
-  unsubscribers.length = 0;
-
-  // Re-evaluate interoceptive state after each dopamine reward cycle
-  // (the natural "check-in" moment when the brain assesses how things went)
-  const unsubReward = bus.on("dopamine:reward", () => {
-    evaluate();
-  });
-  unsubscribers.push(unsubReward);
-
-  // Also evaluate when vital impulse fires (significant internal event)
-  const unsubFired = bus.on("vital-impulse:fired", () => {
-    evaluate();
-  });
-  unsubscribers.push(unsubFired);
-
-  logger?.info("BrainAgent Interoception: initialized");
+  active?.dispose();
+  active = createInteroception(getters, log);
 }
 
 export function stopInteroception(): void {
-  for (const unsub of unsubscribers) {
-    unsub();
-  }
-  unsubscribers.length = 0;
-  logger?.info("BrainAgent Interoception: stopped.");
+  active?.stop();
+  active = undefined;
 }
 
-// ── Core evaluation ───────────────────────────────────────────────
-
-function evaluate(): void {
-  const social = statGetters.getSocialDriveStats?.();
-  const cognitive = statGetters.getCognitiveHungerStats?.();
-  const creative = statGetters.getCreativeDriveStats?.();
-  const mastery = statGetters.getMasteryDriveStats?.();
-  const impulse = statGetters.getVitalImpulseStats?.();
-  const neuro = statGetters.getNeuromodulatorState?.();
-
-  // Drive needs (0 = fully satiated, 1 = starving)
-  const socialNeed = social ? social.need : 0;
-  const cognitiveNeed = cognitive ? cognitive.need : 0;
-  const creativeNeed = creative ? creative.need : 0;
-  const masteryNeed = mastery ? mastery.need : 0;
-
-  const pressure = impulse?.currentPressure ?? 0;
-  const dopamine = neuro?.dopamine ?? 0.5;
-  const serotonin = neuro?.serotonin ?? 0.5;
-  const norepinephrine = neuro?.norepinephrine ?? 0.5;
-  const acetylcholine = neuro?.acetylcholine ?? 0.5;
-
-  const aggregateNeed = (socialNeed + cognitiveNeed + creativeNeed + masteryNeed) / 4;
-
-  // Classify pattern
-  const { pattern, confidence, description } = classifyPattern({
-    socialNeed,
-    cognitiveNeed,
-    creativeNeed,
-    masteryNeed,
-    aggregateNeed,
-    pressure,
-    dopamine,
-    serotonin,
-    norepinephrine,
-    acetylcholine,
-  });
-
-  const state: InteroceptiveState = {
-    pattern,
-    confidence,
-    description,
-    driveNeeds: {
-      social: socialNeed,
-      cognitive: cognitiveNeed,
-      creative: creativeNeed,
-      mastery: masteryNeed,
-    },
-    aggregateNeed,
-    pressure,
-    timestamp: Date.now(),
-  };
-
-  // Only emit if pattern changed or confidence shifted significantly
-  const changed =
-    !lastState ||
-    lastState.pattern !== state.pattern ||
-    Math.abs(lastState.confidence - state.confidence) > 0.15;
-
-  lastState = state;
-
-  if (changed) {
-    bus.emitSync("interoception:state-updated", {
-      pattern: state.pattern,
-      confidence: state.confidence,
-      description: state.description,
-      aggregateNeed: state.aggregateNeed,
-    });
-
-    logger?.info(
-      `BrainAgent Interoception: ${state.pattern} (confidence=${(state.confidence * 100).toFixed(0)}%) — ${state.description}`,
-    );
-  }
+export function getInteroceptiveState(): InteroceptiveState | null {
+  return active?.getState() ?? null;
 }
 
-// ── Pattern classification ────────────────────────────────────────
+/**
+ * Build a context string for injection into the agent's prompt.
+ * Returns null if no interoceptive state has been computed yet.
+ */
+export function buildInteroceptionContext(): string | null {
+  return active?.buildContext() ?? null;
+}
+
+// ── Pattern classification (чистые функции) ───────────────────────
 
 type ClassifierInput = {
   socialNeed: number;
@@ -343,36 +410,4 @@ function scoreExploratory(input: ClassifierInput) {
     description:
       "Исследовательский азарт — хочется копать глубже, узнавать новое, задавать вопросы",
   };
-}
-
-// ── Public API ────────────────────────────────────────────────────
-
-export function getInteroceptiveState(): InteroceptiveState | null {
-  return lastState;
-}
-
-/**
- * Build a context string for injection into the agent's prompt.
- * Returns null if no interoceptive state has been computed yet.
- */
-export function buildInteroceptionContext(): string | null {
-  if (!lastState) return null;
-
-  const driveLines: string[] = [];
-  const { driveNeeds } = lastState;
-  if (driveNeeds.social > 0.4)
-    driveLines.push(`социальная потребность: ${(driveNeeds.social * 100).toFixed(0)}%`);
-  if (driveNeeds.cognitive > 0.4)
-    driveLines.push(`познавательный голод: ${(driveNeeds.cognitive * 100).toFixed(0)}%`);
-  if (driveNeeds.creative > 0.4)
-    driveLines.push(`творческий порыв: ${(driveNeeds.creative * 100).toFixed(0)}%`);
-  if (driveNeeds.mastery > 0.4)
-    driveLines.push(`стремление к мастерству: ${(driveNeeds.mastery * 100).toFixed(0)}%`);
-
-  const parts = [`Внутреннее состояние: ${lastState.description}`];
-  if (driveLines.length > 0) {
-    parts.push(`Активные потребности: ${driveLines.join(", ")}`);
-  }
-
-  return parts.join("\n");
 }

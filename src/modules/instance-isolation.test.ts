@@ -8,7 +8,11 @@ import { createTemporalBinding } from "./temporal-binding.ts";
 import { createPredictiveEngine } from "./predictive-engine.ts";
 import { createBasalGanglia } from "./basal-ganglia.ts";
 import { createMirrorNeurons } from "./mirror-neurons.ts";
-import { DEFAULT_CONFIG, type WorkingMemoryEntry } from "./types.ts";
+import { createInteroception } from "./interoception.ts";
+import { createRewardLedger } from "./reward-ledger.ts";
+import { createTemporalAwareness } from "./temporal-awareness.ts";
+import { bus } from "./event-bus.ts";
+import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
 let dirs: string[] = [];
 
@@ -134,5 +138,69 @@ describe("per-instance состояние пакета B2 (v0.6.3)", () => {
     // Но лениво создаёт свою при getOrCreateModel
     expect(b.getOrCreateModel("user1").userId).toBe("user1");
     expect(a.getUserModel("user2")).toBeUndefined();
+  });
+});
+
+describe("per-instance состояние пакета C (v0.6.4)", () => {
+  it("фабрика reward ledger создаёт независимые журналы наград", () => {
+    const a = createRewardLedger(makeDir("brainagent-rl-a-"), DEFAULT_CONFIG);
+    const b = createRewardLedger(makeDir("brainagent-rl-b-"), DEFAULT_CONFIG);
+
+    a.record("manual", 0.5);
+
+    expect(a.getRecentEntries()).toHaveLength(1);
+    // Второй инстанс не видит записи первого
+    expect(b.getRecentEntries()).toHaveLength(0);
+    expect(b.getStats().entries).toBe(0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика temporal awareness создаёт независимые счётчики взаимодействий", () => {
+    const a = createTemporalAwareness(makeDir("brainagent-ta-a-"), DEFAULT_CONFIG);
+    const b = createTemporalAwareness(makeDir("brainagent-ta-b-"), DEFAULT_CONFIG);
+
+    a.recordInteraction();
+    a.recordInteraction();
+
+    expect(a.getStats().totalInteractions).toBe(2);
+    // Второй инстанс не видит взаимодействия первого
+    expect(b.getStats().totalInteractions).toBe(0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика interoception создаёт независимые внутренние состояния", () => {
+    // Инстансы с разными геттерами потребностей
+    const a = createInteroception({
+      getSocialDriveStats: () => ({ need: 0.9 }) as never,
+    });
+    const b = createInteroception({
+      getCognitiveHungerStats: () => ({ need: 0.9 }) as never,
+    });
+
+    // Событие на шине заставляет оба инстанса пересчитать состояние,
+    // но каждый классифицирует по своим геттерам
+    bus.emitSync("dopamine:reward", {
+      reward: 0.5,
+      predictionError: 0,
+      participatingModules: [],
+      creditAssignment: {},
+      context: { domain: "casual", complexity: "simple", emotion: "neutral", input: "test" },
+    } as DopamineSignal);
+
+    expect(a.getState()).not.toBeNull();
+    expect(b.getState()).not.toBeNull();
+    // Социальная потребность видна только в инстансе A
+    expect(a.getState()?.driveNeeds.social).toBeCloseTo(0.9, 3);
+    expect(b.getState()?.driveNeeds.social).toBe(0);
+    // Познавательный голод — только в инстансе B
+    expect(a.getState()?.driveNeeds.cognitive).toBe(0);
+    expect(b.getState()?.driveNeeds.cognitive).toBeCloseTo(0.9, 3);
+
+    a.stop();
+    b.stop();
   });
 });
