@@ -115,6 +115,24 @@ const PROCEDURE_PATTERNS: ProcedurePattern[] = [
       };
     },
   },
+  {
+    // v0.9.3: нумерованное перечисление «1) … 2) … 3)» — так
+    // пользователи диктуют процедуры (боевой тест: сообщение
+    // «выполняй три шага: 1) … 2) … 3) …» не распознавалось).
+    pattern: /1\)\s*(.+?)\s*[,;.]\s*2\)\s*(.+?)\s*[,;.]\s*3\)\s*(.+?)(?:[.;]|$)/i,
+    type: "steps",
+    extract: (m, text) => {
+      const steps = [m[1]?.trim(), m[2]?.trim(), m[3]?.trim()].filter(
+        (s): s is string => !!s && s.length > 2,
+      );
+      if (steps.length < 2) return null;
+      return {
+        triggerPattern: text.slice(0, 60).trim().replace(/[\s,;:]+$/, ""),
+        description: `Процедура из ${steps.length} шагов`,
+        steps,
+      };
+    },
+  },
 
   // ═══════════════════════════════════════════════════════════════════
   // ACTION REQUESTS (Russian) - commands that imply procedures

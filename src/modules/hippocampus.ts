@@ -1002,6 +1002,26 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     triggerPattern: string,
     steps: string[],
   ): ProceduralMemory {
+    // v0.9.3: повторное извлечение того же триггера усиливает
+    // существующую запись, а не плодит дубликаты (боевой тест:
+    // 11 копий одного триггера; storeFact так умеет с v0.1).
+    const key = triggerPattern.trim().toLowerCase();
+    const existing = proceduralStore.find(
+      (p) => p.triggerPattern.trim().toLowerCase() === key,
+    );
+    if (existing) {
+      existing.lastUsed = Date.now();
+      if (steps.length > 0 && existing.steps.length === 0) {
+        existing.steps = steps;
+        proceduralIndex.remove(existing.id);
+        proceduralIndex.add(
+          existing.id,
+          `${existing.description} ${existing.triggerPattern} ${steps.join(" ")}`,
+        );
+      }
+      persistProcedural();
+      return existing;
+    }
     const proc: ProceduralMemory = {
       id: nextId("proc"),
       description,

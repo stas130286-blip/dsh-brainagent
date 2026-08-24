@@ -373,7 +373,10 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
       isProcedural(input, cycle.classification)
     ) {
       const procedure = await extractProcedureAsync(input, getHostConfig(), cycle.classification, logger);
-      if (procedure && procedure.confidence > 0.5) {
+      // v0.9.3: процедуры без шагов — шум (вопросы вида «как у тебя
+      // дела»): они попадали в инъекции пустыми «Learned Workflow».
+      // Сохраняем только содержательные (шаги есть) извлечения.
+      if (procedure && procedure.confidence > 0.5 && procedure.steps.length > 0) {
         storeWorkflow(procedure.description, procedure.triggerPattern, procedure.steps);
         logger.info(`BrainAgent Procedural: stored workflow "${procedure.description}"`);
       }
