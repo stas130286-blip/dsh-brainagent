@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0 — 2026-08-24
+
+Единый metrics-файл наблюдаемости — последний открытый пункт ревью.
+
+- Новый модуль `src/modules/metrics.ts`: фабрика `createMetricsCollector`
+  (per-instance состояние; пустой workspaceDir = detached-режим без диска).
+  Агрегирует ленивые провайдеры статистики и пишет единый
+  `.brainagent/metrics.json`: generatedAt/startedAt/uptimeMs/updates,
+  секции по модулям и секция `errors` для упавших провайдеров.
+- Плагин регистрирует 15 провайдеров: версия, флаги модулей,
+  injection-метрики, workingMemory, attention, neuromodulators,
+  vitalImpulse, dmn, goalStack, goalExecutor, curiosity, четыре драйва,
+  sessionBridge (по флагам). Первичный снимок при старте, далее раз в 60 с;
+  запись через schedulePersist (debounce + атомарно), cleanup снимает
+  интервал и сбрасывает файл на диск.
+- +4 теста (изоляция инстансов, падающий провайдер в errors,
+  detached-режим, запись на диск через stop()).
+
+Проверки: tsc 0 ошибок, 762/762 теста (44 файла), esbuild-бандл 618.2kb,
+smoke-phase2/3 ОК.
+
 ## 0.8.2 — 2026-08-24
 
 Дочистка по итогам внешнего ревью v0.8.1 (оба замечания — не блокеры).
