@@ -604,6 +604,15 @@ export function apply(ctx: Context, config: Config) {
     const key = String(_session.id);
 
     if (event.type === "user/message") {
+      // v0.9.3: user/message на поверхности модели — это и прямые
+      // реплики человека, и синтетические инъекции хоста
+      // (runtime-context снапшоты system-prompt, каталог скиллов,
+      // file-change notices, goal-продолжения — всё с source.kind
+      // !== 'user'). Боевой тест: снапшот, пришедший в тёрне после
+      // реплики пользователя, перезаписал цикл — обучающее
+      // сообщение не дошло до контура обучения, процедура не
+      // сохранилась. Учимся только на прямых репликах человека.
+      if (event.data.source?.kind !== "user") return;
       const text = textOfContent(event.data.content);
       if (!text.trim()) return;
 

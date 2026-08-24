@@ -18,9 +18,31 @@ describe("message-guard: служебные сообщения хоста (v0.9.
     expect(isHarnessSystemMessage("  \n<system-reminder>\nкаталог")).toBe(true);
   });
 
+  it("runtime-context снапшоты dsh распознаются как служебные (v0.9.3)", () => {
+    // dsh system-prompt вбрасывает снапшот контекста как user-role
+    // сообщение (joinContextSections, пакеты core/system-prompt).
+    const snapshot =
+      "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n" +
+      "Current DSH file policy: danger-full-access.";
+    expect(isHarnessSystemMessage(snapshot)).toBe(true);
+    // Вариант очистки контекста (runtime-context.ts, CLEARED).
+    expect(
+      isHarnessSystemMessage(
+        "Current runtime context: none. Earlier runtime-context snapshots no longer apply.",
+      ),
+    ).toBe(true);
+    expect(
+      isHarnessSystemMessage(
+        "  Current runtime context. This snapshot supersedes earlier runtime-context snapshots.",
+      ),
+    ).toBe(true);
+  });
+
   it("обычные сообщения пользователя проходят", () => {
     expect(isHarnessSystemMessage("Привет! Как дела?")).toBe(false);
     expect(isHarnessSystemMessage("Что такое <system-reminder>?")).toBe(false);
+    // Похожее, но не служебное начало — не должно фильтроваться.
+    expect(isHarnessSystemMessage("Current status of my project is good.")).toBe(false);
   });
 
   it("guard плагина и guard хоста не пересекаются", () => {

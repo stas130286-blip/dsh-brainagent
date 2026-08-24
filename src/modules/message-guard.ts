@@ -39,7 +39,19 @@ export function isInternalPluginMessage(text: string): boolean {
  * skill-catalog). Это не реплики пользователя: до фильтра контур
  * обучения классифицировал каталог, извлекал из него «факты» и
  * заносил их в эпизодическую память (найдено боевым тестом).
+ *
+ * v0.9.3: туда же — runtime-context снапшоты system-prompt
+ * («Current runtime context…», joinContextSections) и сигнал
+ * очистки контекста (runtime-context.ts, CLEARED). Боевой тест:
+ * снапшот перезаписал цикл с обучающим сообщением пользователя.
  */
+const HARNESS_SYSTEM_PREFIXES = [
+  "<system-reminder>",
+  "Current runtime context.",
+  "Current runtime context: none.",
+] as const;
+
 export function isHarnessSystemMessage(text: string): boolean {
-  return text.trimStart().startsWith("<system-reminder>");
+  const trimmed = text.trimStart();
+  return HARNESS_SYSTEM_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
