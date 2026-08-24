@@ -37,6 +37,7 @@ import { createGoalStack } from "./goal-stack.ts";
 import { createAgentIdentity } from "./agent-identity.ts";
 import { createMasteryDrive } from "./mastery-drive.ts";
 import { createVitalImpulse } from "./vital-impulse.ts";
+import { createCommandRegistry } from "./commands.ts";
 import { bus } from "./event-bus.ts";
 import type { HostConfig } from "./host-config.ts";
 import {
@@ -844,5 +845,54 @@ describe("O: фабрика vital-impulse изолирована", () => {
     expect(a.getStats().totalSignalsReceived).toBe(1);
     expect(b.getStats().totalSignalsReceived).toBe(2);
     b.stop();
+  });
+});
+
+// ── P: commands ──────────────────────────────────────────────────
+
+describe("P: фабрика commands изолирована", () => {
+  it("фабрика commands хранит независимые геттеры статистики", async () => {
+    type Handler = (ctx: { args?: string }) => Promise<{ text: string }> | { text: string };
+    const makeHost = () => {
+      const handlers = new Map<string, Handler>();
+      const api = {
+        registerCommand: (def: { name: string; handler: Handler }) => {
+          handlers.set(def.name, def.handler);
+        },
+        logger: { info: () => {} },
+        config: {} as HostConfig,
+      };
+      return { api, handlers };
+    };
+
+    const a = createCommandRegistry();
+    const b = createCommandRegistry();
+
+    a.setStatGetters({
+      workingMemory: () => ({ entryCount: 7, oldestTimestamp: null, newestTimestamp: null }),
+    });
+    b.setStatGetters({
+      workingMemory: () => ({ entryCount: 3, oldestTimestamp: null, newestTimestamp: null }),
+    });
+
+    const hostA = makeHost();
+    const hostB = makeHost();
+    a.register(hostA.api, DEFAULT_CONFIG);
+    b.register(hostB.api, DEFAULT_CONFIG);
+
+    const handlerA = hostA.handlers.get("brainagent");
+    const handlerB = hostB.handlers.get("brainagent");
+    expect(handlerA).toBeDefined();
+    expect(handlerB).toBeDefined();
+
+    // Подкоманда wm читает геттеры своего реестра
+    const resA = await handlerA!({ args: "wm" });
+    const resB = await handlerB!({ args: "wm" });
+    expect(resA.text).toContain("Entries: 7");
+    expect(resB.text).toContain("Entries: 3");
+
+    // buildStatus тоже использует локальные геттеры
+    expect(a.buildStatus(DEFAULT_CONFIG).text).toContain("Buffer entries: 7");
+    expect(b.buildStatus(DEFAULT_CONFIG).text).toContain("Buffer entries: 3");
   });
 });
