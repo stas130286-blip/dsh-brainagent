@@ -7,6 +7,8 @@ console.log("config modules flags:", JSON.stringify(config.modules));
 const listeners = {};
 const effects = [];
 const logs = [];
+const registeredCommands = {};
+const mockAgent = { id: "smoke-session", followup: () => {} };
 const ctx = {
   logger: {
     info: (m) => logs.push("info: " + m),
@@ -20,6 +22,13 @@ const ctx = {
   effect: (fn) => {
     effects.push(fn);
     return () => {};
+  },
+  agents: { list: () => [mockAgent] },
+  commands: {
+    register: (def) => {
+      registeredCommands[def.name] = def;
+      return () => {};
+    },
   },
 };
 
@@ -49,3 +58,6 @@ await new Promise((r) => setTimeout(r, 1500));
 console.log("--- log tail ---");
 for (const line of logs.slice(-15)) console.log(line);
 console.log("SMOKE OK");
+// The plugin leaves background timers (bus GC, circadian, dream mode)
+// running, so exit explicitly — same as the phase-3 smoke.
+process.exit(0);

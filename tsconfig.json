@@ -1,26 +1,32 @@
 {
-  // Local plugin project modeled after repo packages: project references keep
-  // vendor/package sources out of this program, while tsconfig.base.json's
-  // paths provide source-level resolution for editor/tsx tooling.
-  // Typecheck: pnpm exec tsc -p brainagent/tsconfig.json
-  "extends": "../tsconfig.base.json",
+  // Standalone TypeScript project for the BrainAgent plugin.
+  //
+  // The plugin is published and developed as a self-contained package
+  // (deps resolve from node_modules, not from the dsh monorepo layout),
+  // so this project deliberately does NOT extend ../tsconfig.base.json
+  // or use project references — those only exist inside the monorepo.
+  //
+  // Typecheck: pnpm typecheck  (tsc -p tsconfig.json --noEmit)
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "lib/types",
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2024"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    // Sources use explicit ".ts" import specifiers (required by the dsh
+    // runtime when loading TypeScript sources directly); keep the repo's
+    // relaxed checks that were part of the original project settings.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noUncheckedIndexedAccess": false,
     "exactOptionalPropertyTypes": false
   },
-  "include": ["src"],
-  "references": [
-    { "path": "../vendor/cosmokit" },
-    { "path": "../vendor/cordis" },
-    { "path": "../vendor/schemastery" },
-    { "path": "../packages/core/session" },
-    { "path": "../packages/core/agent" },
-    { "path": "../packages/core/tools" },
-    { "path": "../packages/llm/llm" },
-    { "path": "../packages/interaction/commands" }
-  ]
+  "include": ["src", "vitest.config.ts"]
 }

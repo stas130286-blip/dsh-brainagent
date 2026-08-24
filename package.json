@@ -1,6 +1,6 @@
 {
   "name": "dsh-brainagent",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "BrainAgent — cognitive architecture plugin for DeepSeek Harness (dsh): brain-inspired memory, emotions, drives, learning and autonomy",
   "type": "module",
   "main": "lib/index.js",
