@@ -86,6 +86,15 @@ export interface Config {
   };
   /** Prompt-injection volume budget for diagnostics & attention-gate tuning. */
   contextInjection: { maxChars: number };
+  /** Learning loop: reward ledger + strategy bandit (RL-lite). */
+  learningLoop: {
+    rewardLedger: { enabled: boolean; maxEntries: number };
+    strategyBandit: {
+      enabled: boolean;
+      explorationConstant: number;
+      attributionWindowMs: number;
+    };
+  };
   /** Minimum gap between proactive (autonomous) messages, ms. */
   autonomousMinGapMs: number;
 }
@@ -202,6 +211,20 @@ export const Config: Schema<Config> = Schema.object({
       .default(12_000)
       .description("Over-budget warning threshold for assembled prompt-injection chars"),
   }).default({ maxChars: 12_000 }),
+  learningLoop: Schema.object({
+    rewardLedger: Schema.object({
+      enabled: Schema.boolean().default(true),
+      maxEntries: Schema.number().default(500),
+    }).default({ enabled: true, maxEntries: 500 }),
+    strategyBandit: Schema.object({
+      enabled: Schema.boolean().default(true),
+      explorationConstant: Schema.number().default(1.4),
+      attributionWindowMs: Schema.number().default(5 * 60 * 1000),
+    }).default({ enabled: true, explorationConstant: 1.4, attributionWindowMs: 5 * 60 * 1000 }),
+  }).default({
+    rewardLedger: { enabled: true, maxEntries: 500 },
+    strategyBandit: { enabled: true, explorationConstant: 1.4, attributionWindowMs: 5 * 60 * 1000 },
+  }),
   autonomousMinGapMs: Schema.number()
     .default(10 * 60 * 1000)
     .description("Minimum gap between proactive (autonomous) messages, ms"),
@@ -243,6 +266,16 @@ export function mergeBrainConfig(config: Config): BrainAgentConfig {
     contextInjection: {
       ...DEFAULT_CONFIG.contextInjection,
       ...config.contextInjection,
+    },
+    learningLoop: {
+      rewardLedger: {
+        ...DEFAULT_CONFIG.learningLoop.rewardLedger,
+        ...(config.learningLoop?.rewardLedger ?? {}),
+      },
+      strategyBandit: {
+        ...DEFAULT_CONFIG.learningLoop.strategyBandit,
+        ...(config.learningLoop?.strategyBandit ?? {}),
+      },
     },
   };
 }

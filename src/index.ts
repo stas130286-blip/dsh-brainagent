@@ -93,7 +93,7 @@ import {
   extractGoalsFromConversation,
 } from "./modules/goal-stack.ts";
 import { getGoalExecutorStats } from "./modules/goal-executor.ts";
-import { initCuriosityDrive, getCuriosityStats } from "./modules/curiosity-drive.ts";
+import { initCuriosityDrive, getCuriosityStats, getOpenGaps } from "./modules/curiosity-drive.ts";
 import { initSocialDrive, stopSocialDrive, getSocialDriveStats, getSatiation as getSocialDriveSatiation } from "./modules/social-drive.ts";
 import { initCognitiveHunger, stopCognitiveHunger, getCognitiveHungerStats, getCognitiveHungerSatiation } from "./modules/cognitive-hunger.ts";
 import { initCreativeDrive, stopCreativeDrive, getCreativeDriveStats, getCreativeDriveSatiation } from "./modules/creative-drive.ts";
@@ -112,6 +112,8 @@ import { initQualiaSimulator, getQualiaSimulatorStats } from "./modules/qualia-s
 import { initTemporalAwareness, stopTemporalAwareness, recordInteraction, getTemporalAwarenessStats } from "./modules/temporal-awareness.ts";
 import { initInteroception, stopInteroception, getInteroceptiveState } from "./modules/interoception.ts";
 import { getSuppressedDomainHints, initProactiveFeedback, isDomainSuppressed, recordProactiveReaction, stopProactiveFeedback } from "./modules/proactive-feedback.ts";
+import { initRewardLedger, stopRewardLedger } from "./modules/reward-ledger.ts";
+import { initStrategyBandit, stopStrategyBandit } from "./modules/strategy-bandit.ts";
 import { initMetabolicBudget, consumeEnergy } from "./modules/metabolic-budget.ts";
 import { initEmergentModules } from "./modules/emergent-modules.ts";
 import { initThalamicGate, getThalamicGateStats } from "./modules/thalamic-gate.ts";
@@ -423,6 +425,14 @@ export function apply(ctx: Context, config: Config) {
     initProactiveFeedback(dataDir, brainConfig, logger);
   }
 
+  // Learning loop (RL-lite): журнал наград и бандит выбора стратегий.
+  if (brainConfig.learningLoop.rewardLedger.enabled) {
+    initRewardLedger(dataDir, brainConfig);
+  }
+  if (brainConfig.learningLoop.strategyBandit.enabled) {
+    initStrategyBandit(dataDir, brainConfig);
+  }
+
   if (brainConfig.modules.introspection) {
     initIntrospection(dataDir, brainConfig);
   }
@@ -727,7 +737,12 @@ export function apply(ctx: Context, config: Config) {
       unsubs.push(
         bus.on("circadian:phase-changed", (data) => {
           if (data.newPhase === "sleep") {
-            generateBackgroundThoughts(brainConfig);
+            generateBackgroundThoughts(
+              brainConfig,
+              undefined,
+              undefined,
+              getOpenGaps().map((gap) => ({ topic: gap.topic })),
+            );
             void runAssociationFinding(brainConfig).catch(() => {
               /* non-critical */
             });
@@ -776,6 +791,8 @@ export function apply(ctx: Context, config: Config) {
       if (brainConfig.modules.autonomousResearch) stopAutonomousResearch();
       if (brainConfig.modules.interoception) stopInteroception();
       if (brainConfig.modules.proactiveFeedback) stopProactiveFeedback();
+      if (brainConfig.learningLoop.rewardLedger.enabled) stopRewardLedger();
+      if (brainConfig.learningLoop.strategyBandit.enabled) stopStrategyBandit();
       if (brainConfig.modules.temporalAwareness) stopTemporalAwareness();
     };
   });

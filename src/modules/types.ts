@@ -459,6 +459,10 @@ export type BrainEventMap = {
 
   // ── Proactive feedback events ─────────────────────────────────────
   "proactive:reaction": { domain: string; signal: string; hits: string[] };
+
+  // ── Learning loop events ─────────────────────────────────────────
+  "reward:recorded": { reward: number; source: string; context?: string };
+  "bandit:arm-chosen": { decisionPoint: string; arm: string };
 };
 
 export type BrainEventName = keyof BrainEventMap;
@@ -1377,6 +1381,23 @@ export type BrainAgentConfig = {
     /** Max assembled context chars per cycle before over-budget warning */
     maxChars: number;
   };
+  /** Learning loop: reward journal + strategy bandit (RL-lite) */
+  learningLoop: {
+    rewardLedger: {
+      /** Record the unified reward journal */
+      enabled: boolean;
+      /** Max journal entries before trimming */
+      maxEntries: number;
+    };
+    strategyBandit: {
+      /** Adaptively pick strategies by accumulated reward */
+      enabled: boolean;
+      /** UCB1 exploration constant */
+      explorationConstant: number;
+      /** Window (ms) during which a reward is attributed to the chosen arm */
+      attributionWindowMs: number;
+    };
+  };
 };
 
 export const DEFAULT_CONFIG: BrainAgentConfig = {
@@ -1750,6 +1771,14 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
     blockedToolsInAutonomous: ["web_search", "web_fetch", "exec"],
   },
   contextInjection: { maxChars: 12_000 },
+  learningLoop: {
+    rewardLedger: { enabled: true, maxEntries: 500 },
+    strategyBandit: {
+      enabled: true,
+      explorationConstant: 1.4,
+      attributionWindowMs: 5 * 60 * 1000,
+    },
+  },
 };
 
 // ── Working Memory types ──────────────────────────────────────────

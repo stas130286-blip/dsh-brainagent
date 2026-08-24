@@ -101,6 +101,8 @@ export type DriveEngineSpec = {
   factsCategory: string;
   /** Запасная тема DMN, если фактов нет */
   fallbackTopic: string;
+  /** Канонический источник тем DMN (приоритетнее fallbackTopic), если фактов нет */
+  topicProvider?: () => Array<{ topic: string }>;
   /** Базовый буст насыщения при vital-impulse:fired */
   firedBaseBoost: number;
   /** Имя поля времени в payload urge-события (совместимость слушателей) */
@@ -370,6 +372,14 @@ export class DriveEngine {
     if (facts.length > 0) {
       for (const fact of facts) {
         topics.push({ topic: fact.content.slice(0, 100) });
+      }
+    } else if (this.spec.topicProvider) {
+      // Канонический источник тем драйва (например, пробелы curiosity-drive)
+      const provided = this.spec.topicProvider().slice(0, 3);
+      if (provided.length > 0) {
+        topics.push(...provided);
+      } else {
+        topics.push({ topic: this.spec.fallbackTopic });
       }
     } else {
       // Запасной вариант: общая тема-затравка домена

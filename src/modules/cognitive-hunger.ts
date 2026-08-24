@@ -18,6 +18,7 @@
 
 import { bus } from "./event-bus.ts";
 import { DriveEngine, type DriveEngineConfig } from "./drive-engine.ts";
+import { getOpenGaps } from "./curiosity-drive.ts";
 import type { BrainAgentConfig, CognitiveHungerStats, Desire, SemanticMemory } from "./types.ts";
 
 // ── Типы ──────────────────────────────────────────────────────────
@@ -73,6 +74,9 @@ export function initCognitiveHunger(
       desireDescription: "Feeling the urge to learn something new or explore a knowledge gap",
       factsCategory: "fact",
       fallbackTopic: "knowledge gaps and interesting topics to explore",
+      // Драйв думает о реальных пробелах curiosity-drive (канонический
+      // источник пробелов в знаниях), а не об общей запасной теме
+      topicProvider: () => getOpenGaps().map((gap) => ({ topic: gap.topic })),
       firedBaseBoost: 0.25,
       urgeTimeField: "timeSinceLastLearning",
       legacyKeys: {

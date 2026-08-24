@@ -302,10 +302,20 @@ export function generateBackgroundThoughts(
     }
   }
 
-  // 3. Thoughts from knowledge gaps
+  // 3. Thoughts from knowledge gaps — DMN consumes gaps (canonical
+  // source: curiosity-drive) instead of generating them; 24h dedup
+  // keeps the same gap from spamming the monologue
   if (knowledgeGaps) {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const recentGapThoughts = innerMonologue.filter(
+      (t) => t.source === "pending" && Date.now() - t.timestamp < dayMs,
+    );
     for (const gap of knowledgeGaps.slice(0, 2)) {
       if (newThoughts.length >= maxPerCycle) break;
+      const alreadySeen =
+        recentGapThoughts.some((t) => t.content.includes(gap.topic)) ||
+        newThoughts.some((t) => t.content.includes(gap.topic));
+      if (alreadySeen) continue;
       const thought: BackgroundThought = {
         id: `thought_${Date.now()}_${newThoughts.length}`,
         timestamp: Date.now(),

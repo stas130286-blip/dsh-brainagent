@@ -29,6 +29,7 @@ import { buildSessionBridgeContext } from "../modules/session-bridge.ts";
 import { buildGoalContext, buildVolitionContext } from "../modules/goal-stack.ts";
 import { buildBackgroundThoughtContext, getRecentUnusedInsights } from "../modules/dmn.ts";
 import { buildCuriosityContext } from "../modules/curiosity-drive.ts";
+import { chooseArm } from "../modules/strategy-bandit.ts";
 import { consumeMotivation } from "../modules/vital-impulse.ts";
 import { buildArbiterContext } from "../modules/drive-arbiter.ts";
 import { buildConfidenceContext } from "../modules/introspection.ts";
@@ -49,6 +50,13 @@ import type { Config } from "./config.ts";
 import type { CycleState } from "./cycles.ts";
 import type { AutonomyState } from "./autonomy.ts";
 import type { BrainAgentConfig, BrainState } from "../modules/types.ts";
+
+/** Необязательные декоративные блоки, которые рука "lean" бандита может отбросить. */
+const OPTIONAL_BLOCK_PREFIXES = [
+  "<background-thoughts>",
+  "## Curiosity Note",
+  "<proactive-insight>",
+];
 
 export type PreStepDeps = {
   config: Config;
@@ -348,12 +356,24 @@ export function createPreStepHandler(deps: PreStepDeps) {
       if (temporalCtx) injections.push(temporalCtx);
     }
 
-    let filtered = injections;
+    // Learning loop (бандит): адаптивно выбирает объём контекста.
+    // Рука "lean" отбрасывает необязательные декоративные блоки.
+    let assembled = injections;
+    if (brainConfig.learningLoop.strategyBandit.enabled) {
+      const verbosity = chooseArm("context-verbosity", ["lean", "standard"]);
+      if (verbosity === "lean") {
+        assembled = injections.filter(
+          (block) => !OPTIONAL_BLOCK_PREFIXES.some((prefix) => block.startsWith(prefix)),
+        );
+      }
+    }
+
+    let filtered = assembled;
     if (brainConfig.modules.attentionGate) {
       const norepinephrine = brainConfig.modules.neuromodulatorSystem
         ? getAttentionLevel()
         : 0.5;
-      filtered = filterContextInjections(injections, input, norepinephrine, brainConfig);
+      filtered = filterContextInjections(assembled, input, norepinephrine, brainConfig);
     }
 
     const brainState: BrainState = {
