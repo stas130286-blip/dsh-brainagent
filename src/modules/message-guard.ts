@@ -13,7 +13,7 @@
  * с наших служебных маркеров, игнорируются контуром обучения.
  */
 
-import { AUTONOMOUS_FRAME_PREFIX } from "./autonomy-markers.ts";
+import { AUTONOMOUS_FRAME_PREFIX, AUTONOMY_MEMORIES_PREFIX } from "./autonomy-markers.ts";
 
 /** Служебные маркеры собственных сообщений плагина. */
 export const INTERNAL_MESSAGE_PREFIXES = [
@@ -23,6 +23,8 @@ export const INTERNAL_MESSAGE_PREFIXES = [
   // распознаём и его, чтобы доставленный промпт не обрабатывался
   // контуром обучения как реплика пользователя.
   AUTONOMOUS_FRAME_PREFIX,
+  // v0.9.1: блок воспоминаний автономи-энричера — тоже служебный.
+  AUTONOMY_MEMORIES_PREFIX,
 ] as const;
 
 /** Является ли сообщение собственным служебным сообщением плагина? */

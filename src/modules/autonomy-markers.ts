@@ -39,6 +39,13 @@ export const AUTONOMOUS_FRAMING_LINES = [
 export const AUTONOMOUS_FRAME_PREFIX: string = AUTONOMOUS_FRAMING_LINES[0];
 
 /**
+ * Открывающий маркер блока воспоминаний автономи-энричера.
+ * Блок — контекст для следующей проактивной доставки, а не
+ * самостоятельное сообщение (v0.9.1).
+ */
+export const AUTONOMY_MEMORIES_PREFIX = "<autonomy-memories>";
+
+/**
  * Единая детекция автономного ввода: ровный тег, тег с атрибутами
  * или фрейминг доставки перед тегом.
  */

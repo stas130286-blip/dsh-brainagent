@@ -19,6 +19,7 @@
  */
 
 import { bus } from "./event-bus.ts";
+import { AUTONOMY_MEMORIES_PREFIX } from "./autonomy-markers.ts";
 import type { BrainAgentConfig, Desire, EpisodicMemory, SemanticMemory } from "./types.ts";
 
 // ── Deps injected from index.ts ───────────────────────────────────
@@ -105,7 +106,7 @@ export function createAutonomyEnricher(
 
     // No instructions, no "go do X". Just memories.
     // The agent decides what to do naturally.
-    return ["<autonomy-memories>", ...lines, "</autonomy-memories>"].join("\n");
+    return [AUTONOMY_MEMORIES_PREFIX, ...lines, "</autonomy-memories>"].join("\n");
   }
 
   function enrichWithMemories(motivation: string): void {

@@ -24,6 +24,7 @@ import type {
   MessageDomain,
 } from "../modules/types.ts";
 import { AUTONOMOUS_FRAMING_LINES, AUTONOMOUS_TAG, AUTONOMOUS_TAG_PREFIX } from "./config.ts";
+import { AUTONOMY_MEMORIES_PREFIX } from "../modules/autonomy-markers.ts";
 
 // ── Shared mutable state ────────────────────────────────────────────
 
@@ -40,6 +41,12 @@ export type AutonomyState = {
   lastAutonomousDomain: string;
   /** Timestamp of the last proactive delivery (minimum-gap check). */
   lastAutonomousDeliveryAt: number;
+  /**
+   * Буфер блока воспоминаний автономи-энричера: вливается в
+   * следующую доставку с реальным содержанием (v0.9.1) — соло
+   * блок не доставляется (followup без вопроса и задачи).
+   */
+  pendingMemoryContext?: string;
 };
 
 export function createAutonomyState(): AutonomyState {
@@ -50,6 +57,7 @@ export function createAutonomyState(): AutonomyState {
     lastAutonomousEpisodeId: undefined,
     lastAutonomousDomain: "unknown",
     lastAutonomousDeliveryAt: 0,
+    pendingMemoryContext: undefined,
   };
 }
 
@@ -208,6 +216,14 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
     const trimmed = text.trim();
     if (!trimmed) return; // never deliver an empty impulse
 
+    // v0.9.1: блок воспоминаний энричера — контекст, а не сообщение.
+    // Соло-доставка превращается в followup без вопроса и задачи,
+    // на который агент вынужден отвечать («сообщение пустое»).
+    if (trimmed.startsWith(AUTONOMY_MEMORIES_PREFIX)) {
+      state.pendingMemoryContext = trimmed;
+      return;
+    }
+
     // Loop breaker: after an autonomous turn the agent stays silent until
     // the human returns — otherwise the turn's own learning signals keep
     // re-firing the impulse and the chat fills with cron soliloquies.
@@ -241,6 +257,9 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
     const rejectionHints = brainConfig.modules.proactiveFeedback
       ? deps.getSuppressedDomainHints()
       : [];
+    // Скопленный блок памяти вливается в доставку и очищается.
+    const memoryContext = state.pendingMemoryContext;
+    state.pendingMemoryContext = undefined;
     const framed = trimmed.startsWith(AUTONOMOUS_TAG_PREFIX)
       ? [
           ...AUTONOMOUS_FRAMING_LINES,
@@ -249,8 +268,11 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
             : []),
           "",
           trimmed,
+          ...(memoryContext ? ["", memoryContext] : []),
         ].join("\n")
-      : trimmed;
+      : memoryContext
+        ? `${trimmed}\n\n${memoryContext}`
+        : trimmed;
     state.lastAutonomousDeliveryAt = Date.now();
     deps.deliver(agent, framed);
   };
