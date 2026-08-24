@@ -24,6 +24,8 @@ import { createDreamMode } from "./dream-mode.ts";
 import { createDMN } from "./dmn.ts";
 import { createCuriosityDrive } from "./curiosity-drive.ts";
 import { createDriveArbiter } from "./drive-arbiter.ts";
+import { createIntrospection } from "./introspection.ts";
+import { createThalamicGate } from "./thalamic-gate.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -485,5 +487,61 @@ describe("per-instance состояние пакета H (v0.6.9)", () => {
 
     a.stop();
     b.stop();
+  });
+});
+
+describe("per-instance состояние пакета I (v0.7.0)", () => {
+  it("фабрика introspection создаёт независимые трассы обработки", () => {
+    const a = createIntrospection(makeDir("brainagent-ia-"), DEFAULT_CONFIG);
+    const b = createIntrospection(makeDir("brainagent-ib-"), DEFAULT_CONFIG);
+
+    a.startTrace("hello");
+    a.addTraceStep("mod", "hook", "output");
+    a.completeTrace(true, [], 1);
+
+    expect(a.getIntrospectionStats().traceCount).toBe(1);
+    expect(a.getLastTrace()).toBeDefined();
+    // Второй инстанс не видит трассы первого
+    expect(b.getIntrospectionStats().traceCount).toBe(0);
+    expect(b.getLastTrace()).toBeUndefined();
+  });
+
+  it("фабрика thalamic gate принимает независимые решения гейтинга", () => {
+    const cfg = {
+      enabled: true,
+      activationThreshold: 0.6,
+      minIntervalBetweenActivations: 60_000,
+      maxConsecutiveSkips: 30,
+      signalWeights: { norepinephrine: 1.0 },
+    };
+    const heartbeat = { isUserMessage: false, isEventDriven: false, isIntervalHeartbeat: true };
+
+    const a = createThalamicGate(cfg, {
+      getNeuromodulatorState: () => ({ norepinephrine: 0.9 }),
+    });
+    const b = createThalamicGate(cfg, {});
+
+    const now = Date.now();
+    const da = a.shouldActivateCortex(heartbeat, now);
+    const db = b.shouldActivateCortex(heartbeat, now);
+
+    // У a сильный сигнал норэпинефрина (0.9 >= 0.6) — активация
+    expect(da.activate).toBe(true);
+    expect(da.dominantSignal).toBe("norepinephrine");
+    // У b нет провайдеров — скор 0, гейт пропускает
+    expect(db.activate).toBe(false);
+    expect(a.getStats().totalActivations).toBe(1);
+    expect(b.getStats().totalSkips).toBe(1);
+  });
+
+  it("фабрика introspection с пустым dir живёт в памяти и не трогает диск", () => {
+    const a = createIntrospection("");
+    const b = createIntrospection("");
+
+    a.startTrace("hi");
+    a.completeTrace(true, [], 0.5);
+
+    expect(a.getIntrospectionStats().traceCount).toBe(1);
+    expect(b.getIntrospectionStats().traceCount).toBe(0);
   });
 });
