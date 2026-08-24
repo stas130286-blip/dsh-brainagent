@@ -120,7 +120,7 @@ npx @deepseek-ai/dsh web
 
 ```sh
 pnpm install        # из корня monorepo dsh
-pnpm vitest run     # 42 файла, 719 тестов
+pnpm vitest run     # 42 файла, 722 теста
 ```
 
 Помимо юнит-тестов модулей есть интеграционный eval-харнесс (`src/eval/`):

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.5 — 2026-08-24
+
+Волна 2 миграции на per-instance состояние (пакет D): circadian-rhythm, metabolic-budget, dopamine-system — группа «ритмы и нейрохимия». Внешний API не меняется.
+
+- `circadian-rhythm`, `metabolic-budget`, `dopamine-system` переведены на фабрики (`createCircadianRhythm`, `createMetabolicBudget`, `createDopamineSystem`): циркадные фазы + таймер оценки, энергобюджеты модулей + periodStats, уровни нейромодуляторов + история наград — всё инкапсулировано в инстансах
+- До инициализации чтения возвращают безопасные значения по умолчанию (wake-фаза, единичная энергия, дефолтные уровни нейромодуляторов), мутации — no-op; ленивого создания detached-инстанса нет
+- `setConsolidationCallback` (dream-mode) переживает пере-инициализацию циркады через модульный слот `pendingConsolidationCallback`
+- Чистые функции без состояния (`lerp`, `computeCreditAssignment`, `createDefaultState`) остались свободными; добавлены симметричные `stopMetabolicBudget`/`stopDopamineSystem`
+- +3 теста (instance-isolation.test.ts расширен до 12): изоляция нейромодуляторных состояний, энергобюджетов и циркадных фаз между независимыми инстансами
+- 722 теста / 42 файла; tsc чисто, smoke OK
+
 ## 0.6.4 — 2026-08-24
 
 Волна 2 миграции на per-instance состояние (пакет C): interoception, reward-ledger, temporal-awareness — первые lifecycle-модули с подписками на шину. Внешний API не меняется.

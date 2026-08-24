@@ -11,6 +11,9 @@ import { createMirrorNeurons } from "./mirror-neurons.ts";
 import { createInteroception } from "./interoception.ts";
 import { createRewardLedger } from "./reward-ledger.ts";
 import { createTemporalAwareness } from "./temporal-awareness.ts";
+import { createCircadianRhythm } from "./circadian-rhythm.ts";
+import { createMetabolicBudget } from "./metabolic-budget.ts";
+import { createDopamineSystem } from "./dopamine-system.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -159,7 +162,7 @@ describe("per-instance состояние пакета C (v0.6.4)", () => {
 
   it("фабрика temporal awareness создаёт независимые счётчики взаимодействий", () => {
     const a = createTemporalAwareness(makeDir("brainagent-ta-a-"), DEFAULT_CONFIG);
-    const b = createTemporalAwareness(makeDir("brainagent-ta-b-"), DEFAULT_CONFIG);
+    const b = createTemporalAwareness(makeDir("brainagent-tb2-b-"), DEFAULT_CONFIG);
 
     a.recordInteraction();
     a.recordInteraction();
@@ -199,6 +202,65 @@ describe("per-instance состояние пакета C (v0.6.4)", () => {
     // Познавательный голод — только в инстансе B
     expect(a.getState()?.driveNeeds.cognitive).toBe(0);
     expect(b.getState()?.driveNeeds.cognitive).toBeCloseTo(0.9, 3);
+
+    a.stop();
+    b.stop();
+  });
+});
+
+describe("per-instance состояние пакета D (v0.6.5)", () => {
+  it("фабрика dopamine system создаёт независимые нейромодуляторные состояния", () => {
+    const a = createDopamineSystem(makeDir("brainagent-ds-a-"));
+    const b = createDopamineSystem(makeDir("brainagent-ds-b-"));
+
+    a.processOutcome(
+      {
+        cerebellumPassed: true,
+        cerebellumIssues: [],
+        userSignal: "positive",
+        participatingModules: ["thalamus"],
+        domain: "technical",
+        complexity: "simple",
+        emotion: "neutral",
+        input: "test",
+        habitAutoExecuted: false,
+      },
+      DEFAULT_CONFIG,
+    );
+
+    expect(a.getStats().totalInteractions).toBe(1);
+    // Второй инстанс не видит обработки первого
+    expect(b.getStats().totalInteractions).toBe(0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика metabolic budget создаёт независимые бюджеты энергии", () => {
+    const a = createMetabolicBudget(makeDir("brainagent-mb-a-"), DEFAULT_CONFIG);
+    const b = createMetabolicBudget(makeDir("brainagent-mb-b-"), DEFAULT_CONFIG);
+
+    a.consumeEnergy("thalamus", 0.5);
+
+    expect(a.getModuleEnergy("thalamus")).toBeCloseTo(0.5, 3);
+    // Второй инстанс не видит траты энергии первого
+    expect(b.getModuleEnergy("thalamus")).toBe(1.0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика circadian rhythm создаёт независимые фазы сна", () => {
+    const a = createCircadianRhythm(makeDir("brainagent-cr-a-"), DEFAULT_CONFIG);
+    const b = createCircadianRhythm(makeDir("brainagent-cr-b-"), DEFAULT_CONFIG);
+
+    a.forcePhase("sleep");
+
+    expect(a.getState().phase).toBe("sleep");
+    expect(a.isInSleepPhase()).toBe(true);
+    // Второй инстанс остаётся в фазе бодрствования
+    expect(b.getState().phase).toBe("wake");
+    expect(b.isInWakePhase()).toBe(true);
 
     a.stop();
     b.stop();
