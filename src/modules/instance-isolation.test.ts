@@ -35,10 +35,12 @@ import { createAIEmbeddings } from "./ai-embeddings.ts";
 import { createAutonomyEnricher, type AutonomyEnricherDeps } from "./autonomy-enricher.ts";
 import { createGoalStack } from "./goal-stack.ts";
 import { createAgentIdentity } from "./agent-identity.ts";
+import { createMasteryDrive } from "./mastery-drive.ts";
 import { bus } from "./event-bus.ts";
 import type { HostConfig } from "./host-config.ts";
 import {
   DEFAULT_CONFIG,
+  type Desire,
   type DopamineSignal,
   type SemanticMemory,
   type WorkingMemoryEntry,
@@ -785,5 +787,34 @@ describe("M: фабрика agent-identity изолирована", () => {
     expect(a.getAgentIdentityStats().autobiographicalCount).toBe(1);
     expect(b.getAgentIdentityStats().autobiographicalCount).toBe(0);
     expect(b.getLifeNarrative()).toContain("No significant experiences");
+  });
+});
+
+// ── N: mastery-drive ──────────────────────────────────────────────
+
+describe("N: фабрика mastery-drive изолирована", () => {
+  it("фабрика mastery-drive независимо слушает шину и ведёт домены", () => {
+    const silentLog = { info: () => {} };
+    const noopDeps = {
+      addDesire: () => ({}) as Desire,
+      getDesires: () => [] as Desire[],
+      getFactsByCategory: () => [] as SemanticMemory[],
+      generateMasteryThought: () => {},
+    };
+
+    const a = createMasteryDrive(makeDir("brainagent-md-a-"), DEFAULT_CONFIG, silentLog, noopDeps);
+    const b = createMasteryDrive(makeDir("brainagent-md-b-"), DEFAULT_CONFIG, silentLog, noopDeps);
+
+    // Ручной буст домена — только у первого инстанса
+    a.boostDomainSatiation("technical", 0.2, "test");
+    expect(a.getStats().domainSatiations.technical).toBeDefined();
+    expect(b.getStats().activeDomainCount).toBe(0);
+
+    // stop() снимает подписки: событие шины доходит только до b
+    a.stop();
+    bus.emitSync("dopamine:prediction-error", { error: 0.5, context: "creative/simple" });
+    expect(a.getStats().domainSatiations.creative).toBeUndefined();
+    expect(b.getStats().domainSatiations.creative).toBeGreaterThan(0);
+    b.stop();
   });
 });
