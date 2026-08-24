@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.0 — 2026-08-24
+
+Все 42 модуля когнитивной архитектуры — на фабриках с per-instance состоянием
+(пакеты I–P волн 2 и 3, единый релиз).
+
+- Пакет I: `introspection`, `thalamic-gate` → фабрики.
+- Пакет J: `qualia-simulator`, `structural-plasticity`, `emergent-modules`,
+  `proactive-feedback` → фабрики.
+- Пакет K: `llm-client`, `ai-embeddings` (ленивый шов провайдера),
+  `autonomy-enricher`, `autonomous-research` → фабрики.
+- Пакет L: `goal-stack` → `createGoalStack(workspaceDir, config?)`.
+- Пакет M: `agent-identity` → `createAgentIdentity(workspaceDir, config?)`.
+- Пакет N: `mastery-drive` → `createMasteryDrive(workspaceDir, cfg?, log?, deps?)` —
+  домены, адаптивное затухание и подписки в замыкании; обёртки до init
+  остаются инертными, как и раньше.
+- Пакет O: `vital-impulse` → `createVitalImpulse(workspaceDir, cfg?, log?, deps?)` —
+  давление, привыкание, GABA-торможение и Hebbian-веса в замыкании.
+- Пакет P: `commands` → `createCommandRegistry()` — слоты геттеров статистики
+  в замыкании реестра; обёртки над ленивым синглтоном.
+- Все прежние свободные экспорты сохранены как обёртки над активным
+  инстансом — поведение без видимых изменений.
+- `instance-isolation.test.ts`: блоки I–P (39 тестов изоляции инстансов).
+
+Проверки: tsc 0 ошибок, 749/749 тестов (42 файла), esbuild-бандл 611kb,
+smoke-phase2/3 ОК.
 ## 0.6.9 — 2026-08-24
 
 Волна 2, пакет H — «влечения и арбитраж» на per-instance состояние:
