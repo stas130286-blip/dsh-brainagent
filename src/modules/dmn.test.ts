@@ -187,6 +187,29 @@ describe("Default Mode Network v2", () => {
       expect(thoughts[0].content).toContain("neural networks");
     });
 
+    it("dedupes the same knowledge gap within 24h", () => {
+      const first = generateBackgroundThoughts(DEFAULT_CONFIG, undefined, undefined, [
+        { topic: "quantum computing" },
+      ]);
+      const second = generateBackgroundThoughts(DEFAULT_CONFIG, undefined, undefined, [
+        { topic: "quantum computing" },
+      ]);
+
+      expect(first.filter((t) => t.source === "pending")).toHaveLength(1);
+      expect(second.filter((t) => t.source === "pending")).toHaveLength(0);
+    });
+
+    it("does not false-positive on substring topics", () => {
+      generateBackgroundThoughts(DEFAULT_CONFIG, undefined, undefined, [
+        { topic: "catalog" },
+      ]);
+      const thoughts = generateBackgroundThoughts(DEFAULT_CONFIG, undefined, undefined, [
+        { topic: "cat" },
+      ]);
+
+      expect(thoughts.filter((t) => t.source === "pending")).toHaveLength(1);
+    });
+
     it("respects maxThoughtsPerCycle limit", () => {
       const config: BrainAgentConfig = {
         ...DEFAULT_CONFIG,

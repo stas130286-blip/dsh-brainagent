@@ -38,7 +38,7 @@ let explorationConstant = 1.4;
 let attributionWindowMs = 5 * 60 * 1000;
 let unsubscribers: Array<() => void> = [];
 let initialized = false;
-let lastChoice: { decisionPoint: string; arm: string; timestamp: number } | null = null;
+let lastChoices: Record<string, { arm: string; timestamp: number }> = {};
 
 // ── Инициализация ─────────────────────────────────────────────────
 
@@ -55,20 +55,29 @@ export function initStrategyBandit(workspaceDir: string, config: BrainAgentConfi
   attributionWindowMs = config.learningLoop.strategyBandit.attributionWindowMs;
 
   state = {};
-  lastChoice = null;
+  lastChoices = {};
   loadState();
 
-  // Награда из reward-ledger приписывается последней выбранной руке
+  // Награда из reward-ledger приписывается самому позднему выбору в окне
+  // атрибуции; слот выбора — свой для каждой точки решения, поэтому
+  // несколько точек решения не крадут награды друг у друга
   unsubscribers.push(
     bus.on("reward:recorded", (data) => {
-      if (!lastChoice) return;
-      if (Date.now() - lastChoice.timestamp > attributionWindowMs) {
-        lastChoice = null; // окно атрибуции истекло — награда «ничья»
-        return;
+      const now = Date.now();
+      let bestPoint: string | null = null;
+      for (const [point, choice] of Object.entries(lastChoices)) {
+        if (now - choice.timestamp > attributionWindowMs) {
+          delete lastChoices[point]; // окно атрибуции истекло
+          continue;
+        }
+        if (!bestPoint || choice.timestamp >= lastChoices[bestPoint].timestamp) {
+          bestPoint = point;
+        }
       }
-      const { decisionPoint, arm } = lastChoice;
-      lastChoice = null; // одна награда на один выбор
-      recordOutcome(decisionPoint, arm, data.reward);
+      if (!bestPoint) return; // награда «ничья»
+      const { arm } = lastChoices[bestPoint];
+      delete lastChoices[bestPoint]; // одна награда на один выбор
+      recordOutcome(bestPoint, arm, data.reward);
     }),
   );
 
@@ -85,7 +94,7 @@ export function stopStrategyBandit(): void {
   }
   storageFile = "";
   initialized = false;
-  lastChoice = null;
+  lastChoices = {};
 }
 
 // ── Ядро: UCB1 ────────────────────────────────────────────────────
@@ -144,7 +153,7 @@ export function chooseArm(decisionPoint: string, arms: readonly string[]): strin
 
   const rec = getOrCreateArm(point, chosen);
   rec.lastChosen = Date.now();
-  lastChoice = { decisionPoint, arm: chosen, timestamp: Date.now() };
+  lastChoices[decisionPoint] = { arm: chosen, timestamp: Date.now() };
 
   persistState();
   bus.emitSync("bandit:arm-chosen", { decisionPoint, arm: chosen });

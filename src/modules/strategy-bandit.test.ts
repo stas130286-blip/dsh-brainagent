@@ -134,4 +134,16 @@ describe("strategy bandit", () => {
     expect(stats.arm.plays).toBe(1);
     expect(stats.arm.meanReward).toBeCloseTo(0.5, 3);
   });
+
+  it("attributes each reward to the most recent choice across decision points", () => {
+    chooseArm("dp1", ["a1", "b1"]);
+    chooseArm("dp2", ["a2", "b2"]);
+
+    bus.emitSync("reward:recorded", { reward: 0.6, source: "manual" });
+    expect(getArmStats("dp2").a2.meanReward).toBeCloseTo(0.6, 3); // поздний выбор
+    expect(getArmStats("dp1").a1.plays).toBe(0); // dp1 ещё не атрибутирован
+
+    bus.emitSync("reward:recorded", { reward: -0.4, source: "manual" });
+    expect(getArmStats("dp1").a1.meanReward).toBeCloseTo(-0.4, 3); // слот dp2 уже consumed
+  });
 });

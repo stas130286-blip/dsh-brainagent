@@ -312,9 +312,12 @@ export function generateBackgroundThoughts(
     );
     for (const gap of knowledgeGaps.slice(0, 2)) {
       if (newThoughts.length >= maxPerCycle) break;
+      // Точное сравнение фразы: короткая тема («cat») не должна
+      // сталкиваться с длинной («catalog») через substring
+      const marker = `Knowledge gap in "${gap.topic}"`;
       const alreadySeen =
-        recentGapThoughts.some((t) => t.content.includes(gap.topic)) ||
-        newThoughts.some((t) => t.content.includes(gap.topic));
+        recentGapThoughts.some((t) => t.content.startsWith(marker)) ||
+        newThoughts.some((t) => t.content.startsWith(marker));
       if (alreadySeen) continue;
       const thought: BackgroundThought = {
         id: `thought_${Date.now()}_${newThoughts.length}`,
