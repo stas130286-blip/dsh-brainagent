@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  createSocialDrive,
   initSocialDrive,
   stopSocialDrive,
   getSocialDriveStats,
@@ -223,6 +224,27 @@ describe("Drives", () => {
       vi.advanceTimersByTime(30 * 60 * 1000);
       const after = getMasteryDriveStats().satiation;
       expect(after).toBeLessThan(before);
+    });
+  });
+
+  // ── Per-instance состояние (v0.6.1) ─────────────────────────
+
+  describe("per-instance состояние (v0.6.1)", () => {
+    it("фабрика социального драйва создаёт независимые инстансы", () => {
+      const dirA = mkdtempSync(join(tmpdir(), "brainagent-sd-a-"));
+      const dirB = mkdtempSync(join(tmpdir(), "brainagent-sd-b-"));
+      const a = createSocialDrive(dirA, makeConfig(), noopLog, makeDeps("generateSocialThought") as never);
+      const b = createSocialDrive(dirB, makeConfig(), noopLog, makeDeps("generateSocialThought") as never);
+
+      a.boostSatiation(0.4, "test");
+      expect(a.getStats().satiation).toBeCloseTo(0.9, 5);
+      // Второй инстанс не видит буст первого
+      expect(b.getStats().satiation).toBeCloseTo(0.5, 5);
+
+      a.stop();
+      b.stop();
+      rmSync(dirA, { recursive: true, force: true });
+      rmSync(dirB, { recursive: true, force: true });
     });
   });
 });

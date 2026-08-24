@@ -14,6 +14,12 @@
  *
  * Насыщение восстанавливается, когда dopamine:reward срабатывает
  * в познавательном домене (technical/factual), замыкая гомеостатический цикл.
+ *
+ * v0.6.1 (волна 1 миграции на per-instance состояние):
+ *  - фабрика `createCognitiveHunger()` создаёт инстанс, всё состояние
+ *    инкапсулировано внутри него;
+ *  - module-level `let` остался один — слот активного инстанса для
+ *    обратной совместимости init/stop; уйдёт с переходом на Cordis.
  */
 
 import { bus } from "./event-bus.ts";
@@ -35,22 +41,24 @@ type CognitiveHungerDeps = {
   generateLearningThought: (topics: Array<{ topic: string }>) => void;
 };
 
-// ── Состояние модуля ──────────────────────────────────────────────
+export type CognitiveHungerInstance = {
+  /** Тихая остановка без лога (для повторной инициализации). */
+  dispose(): void;
+  /** Остановка с логом (для stop API). */
+  stop(): void;
+  getStats(): CognitiveHungerStats;
+  getSatiation(): number;
+  boostSatiation(amount: number, reason: string): void;
+};
 
-let engine: DriveEngine | undefined;
-let logger: { info: (msg: string) => void } | undefined;
+// ── Фабрика ───────────────────────────────────────────────────────
 
-// ── Инициализация ─────────────────────────────────────────────────
-
-export function initCognitiveHunger(
+export function createCognitiveHunger(
   workspaceDir: string,
   cfg: BrainAgentConfig,
   log: { info: (msg: string) => void },
   injectedDeps: CognitiveHungerDeps,
-): void {
-  engine?.stop();
-  logger = log;
-
+): CognitiveHungerInstance {
   const c = cfg.cognitiveHunger;
   const driveConfig: DriveEngineConfig = {
     rewardDomains: c.learningDomains,
@@ -66,7 +74,7 @@ export function initCognitiveHunger(
     desireUpdateIntervalMs: c.desireUpdateIntervalMs,
   };
 
-  engine = new DriveEngine(
+  const engine = new DriveEngine(
     {
       id: "cognitive-hunger",
       logName: "CognitiveHunger",
@@ -102,8 +110,8 @@ export function initCognitiveHunger(
   // Инсайт обучения — небольшой буст насыщения (узнали что-то новое)
   engine.addExtraListener(
     bus.on("learning:insight-discovered", () => {
-      engine?.evaluateDecay();
-      engine?.applySatiationDelta(0.08, { persist: true });
+      engine.evaluateDecay();
+      engine.applySatiationDelta(0.08, { persist: true });
     }),
   );
 
@@ -111,8 +119,8 @@ export function initCognitiveHunger(
   engine.addExtraListener(
     bus.on("learning:domain-performance-updated", (data) => {
       if (data.trend === "improving") {
-        engine?.evaluateDecay();
-        engine?.applySatiationDelta(0.05, { persist: true });
+        engine.evaluateDecay();
+        engine.applySatiationDelta(0.05, { persist: true });
       }
     }),
   );
@@ -120,15 +128,15 @@ export function initCognitiveHunger(
   // Обнаружение пробела в знаниях — УСИЛИВАЕТ голод (снижает насыщение)
   engine.addExtraListener(
     bus.on("curiosity:gap-detected", () => {
-      engine?.evaluateDecay();
-      engine?.applySatiationDelta(-0.03, { persist: true });
+      engine.evaluateDecay();
+      engine.applySatiationDelta(-0.03, { persist: true });
     }),
   );
 
   // Новый факт сохранён в гиппокамп — микро-буст (любое запоминание = немного обучения)
   engine.addExtraListener(
     bus.on("hippocampus:stored", () => {
-      engine?.applySatiationDelta(0.02, { persist: true });
+      engine.applySatiationDelta(0.02, { persist: true });
     }),
   );
 
@@ -138,38 +146,87 @@ export function initCognitiveHunger(
   engine.addExtraListener(
     bus.on("cerebellum:validated", (data) => {
       if (!data.passed) {
-        engine?.applySatiationDelta(-0.03);
+        engine.applySatiationDelta(-0.03);
       }
     }),
   );
+
+  function dispose(): void {
+    engine.stop();
+  }
+
+  function stop(): void {
+    engine.stop();
+    log.info("BrainAgent CognitiveHunger: stopped.");
+  }
+
+  function getStats(): CognitiveHungerStats {
+    const s = engine.getStats();
+    return {
+      satiation: s.satiation,
+      needLevel: s.needLevel,
+      need: s.need,
+      lastLearningInteractionTime: s.lastInteractionTime,
+      timeSinceLastLearning: s.timeSinceLastInteraction,
+      totalLearningRewards: s.totalRewards,
+      totalNeedSignals: s.totalNeedSignals,
+      recentInteractionCount: s.recentInteractionCount,
+    };
+  }
+
+  function getSatiation(): number {
+    return engine.getSatiation();
+  }
+
+  function boostSatiation(amount: number, reason: string): void {
+    engine.boostSatiation(amount, reason);
+  }
+
+  return { dispose, stop, getStats, getSatiation, boostSatiation };
+}
+
+// ── Слот активного инстанса (обратная совместимость init/stop) ───
+
+let active: CognitiveHungerInstance | undefined;
+
+// ── Инициализация ─────────────────────────────────────────────────
+
+export function initCognitiveHunger(
+  workspaceDir: string,
+  cfg: BrainAgentConfig,
+  log: { info: (msg: string) => void },
+  injectedDeps: CognitiveHungerDeps,
+): void {
+  active?.dispose();
+  active = createCognitiveHunger(workspaceDir, cfg, log, injectedDeps);
 }
 
 export function stopCognitiveHunger(): void {
-  engine?.stop();
-  engine = undefined;
-  logger?.info("BrainAgent CognitiveHunger: stopped.");
+  active?.stop();
+  active = undefined;
 }
 
 // ── Публичный API ─────────────────────────────────────────────────
 
 export function getCognitiveHungerStats(): CognitiveHungerStats {
-  const s = engine?.getStats();
-  return {
-    satiation: s?.satiation ?? 0,
-    needLevel: s?.needLevel ?? "none",
-    need: s?.need ?? 0,
-    lastLearningInteractionTime: s?.lastInteractionTime ?? 0,
-    timeSinceLastLearning: s?.timeSinceLastInteraction ?? -1,
-    totalLearningRewards: s?.totalRewards ?? 0,
-    totalNeedSignals: s?.totalNeedSignals ?? 0,
-    recentInteractionCount: s?.recentInteractionCount ?? 0,
-  };
+  return (
+    active?.getStats() ?? {
+      satiation: 0,
+      needLevel: "none",
+      need: 0,
+      lastLearningInteractionTime: 0,
+      timeSinceLastLearning: -1,
+      totalLearningRewards: 0,
+      totalNeedSignals: 0,
+      recentInteractionCount: 0,
+    }
+  );
 }
 
 export function getCognitiveHungerSatiation(): number {
-  return engine?.getSatiation() ?? 0;
+  return active?.getSatiation() ?? 0;
 }
 
 export function boostCognitiveHungerSatiation(amount: number, reason: string): void {
-  engine?.boostSatiation(amount, reason);
+  active?.boostSatiation(amount, reason);
 }

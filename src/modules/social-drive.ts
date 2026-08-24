@@ -14,6 +14,12 @@
  *
  * Насыщение восстанавливается, когда dopamine:reward срабатывает
  * в социальном домене (casual/emotional), замыкая гомеостатический цикл.
+ *
+ * v0.6.1 (волна 1 миграции на per-instance состояние):
+ *  - фабрика `createSocialDrive()` создаёт инстанс, всё состояние
+ *    (движок, логгер) инкапсулировано внутри него;
+ *  - module-level `let` остался один — слот активного инстанса для
+ *    обратной совместимости init/stop; уйдёт с переходом на Cordis.
  */
 
 import { bus } from "./event-bus.ts";
@@ -34,22 +40,24 @@ type SocialDriveDeps = {
   generateSocialThought: (topics: Array<{ topic: string }>) => void;
 };
 
-// ── Состояние модуля ──────────────────────────────────────────────
+export type SocialDriveInstance = {
+  /** Тихая остановка без лога (для повторной инициализации). */
+  dispose(): void;
+  /** Остановка с логом (для stop API). */
+  stop(): void;
+  getStats(): SocialDriveStats;
+  getSatiation(): number;
+  boostSatiation(amount: number, reason: string): void;
+};
 
-let engine: DriveEngine | undefined;
-let logger: { info: (msg: string) => void } | undefined;
+// ── Фабрика ───────────────────────────────────────────────────────
 
-// ── Инициализация ─────────────────────────────────────────────────
-
-export function initSocialDrive(
+export function createSocialDrive(
   workspaceDir: string,
   cfg: BrainAgentConfig,
   log: { info: (msg: string) => void },
   injectedDeps: SocialDriveDeps,
-): void {
-  engine?.stop();
-  logger = log;
-
+): SocialDriveInstance {
   const c = cfg.socialDrive;
   const driveConfig: DriveEngineConfig = {
     rewardDomains: c.socialDomains,
@@ -65,7 +73,7 @@ export function initSocialDrive(
     desireUpdateIntervalMs: c.desireUpdateIntervalMs,
   };
 
-  engine = new DriveEngine(
+  const engine = new DriveEngine(
     {
       id: "social-drive",
       logName: "SocialDrive",
@@ -99,38 +107,87 @@ export function initSocialDrive(
   engine.addExtraListener(
     bus.on("amygdala:assessed", (data) => {
       if (data.empathyNeeded && data.emotionIntensity > 0.6) {
-        engine?.applySatiationDelta(-(data.emotionIntensity * 0.04));
+        engine.applySatiationDelta(-(data.emotionIntensity * 0.04));
       }
     }),
   );
+
+  function dispose(): void {
+    engine.stop();
+  }
+
+  function stop(): void {
+    engine.stop();
+    log.info("BrainAgent SocialDrive: stopped.");
+  }
+
+  function getStats(): SocialDriveStats {
+    const s = engine.getStats();
+    return {
+      satiation: s.satiation,
+      needLevel: s.needLevel,
+      need: s.need,
+      lastSocialInteractionTime: s.lastInteractionTime,
+      timeSinceLastSocial: s.timeSinceLastInteraction,
+      totalSocialRewards: s.totalRewards,
+      totalNeedSignals: s.totalNeedSignals,
+      recentInteractionCount: s.recentInteractionCount,
+    };
+  }
+
+  function getSatiation(): number {
+    return engine.getSatiation();
+  }
+
+  function boostSatiation(amount: number, reason: string): void {
+    engine.boostSatiation(amount, reason);
+  }
+
+  return { dispose, stop, getStats, getSatiation, boostSatiation };
+}
+
+// ── Слот активного инстанса (обратная совместимость init/stop) ───
+
+let active: SocialDriveInstance | undefined;
+
+// ── Инициализация ─────────────────────────────────────────────────
+
+export function initSocialDrive(
+  workspaceDir: string,
+  cfg: BrainAgentConfig,
+  log: { info: (msg: string) => void },
+  injectedDeps: SocialDriveDeps,
+): void {
+  active?.dispose();
+  active = createSocialDrive(workspaceDir, cfg, log, injectedDeps);
 }
 
 export function stopSocialDrive(): void {
-  engine?.stop();
-  engine = undefined;
-  logger?.info("BrainAgent SocialDrive: stopped.");
+  active?.stop();
+  active = undefined;
 }
 
 // ── Публичный API ─────────────────────────────────────────────────
 
 export function getSocialDriveStats(): SocialDriveStats {
-  const s = engine?.getStats();
-  return {
-    satiation: s?.satiation ?? 0,
-    needLevel: s?.needLevel ?? "none",
-    need: s?.need ?? 0,
-    lastSocialInteractionTime: s?.lastInteractionTime ?? 0,
-    timeSinceLastSocial: s?.timeSinceLastInteraction ?? -1,
-    totalSocialRewards: s?.totalRewards ?? 0,
-    totalNeedSignals: s?.totalNeedSignals ?? 0,
-    recentInteractionCount: s?.recentInteractionCount ?? 0,
-  };
+  return (
+    active?.getStats() ?? {
+      satiation: 0,
+      needLevel: "none",
+      need: 0,
+      lastSocialInteractionTime: 0,
+      timeSinceLastSocial: -1,
+      totalSocialRewards: 0,
+      totalNeedSignals: 0,
+      recentInteractionCount: 0,
+    }
+  );
 }
 
 export function getSatiation(): number {
-  return engine?.getSatiation() ?? 0;
+  return active?.getSatiation() ?? 0;
 }
 
 export function boostSatiation(amount: number, reason: string): void {
-  engine?.boostSatiation(amount, reason);
+  active?.boostSatiation(amount, reason);
 }

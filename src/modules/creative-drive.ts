@@ -14,6 +14,12 @@
  *
  * Насыщение восстанавливается, когда dopamine:reward срабатывает
  * в креативном домене (creative), замыкая гомеостатический цикл.
+ *
+ * v0.6.1 (волна 1 миграции на per-instance состояние):
+ *  - фабрика `createCreativeDrive()` создаёт инстанс, всё состояние
+ *    инкапсулировано внутри него;
+ *  - module-level `let` остался один — слот активного инстанса для
+ *    обратной совместимости init/stop; уйдёт с переходом на Cordis.
  */
 
 import { bus } from "./event-bus.ts";
@@ -34,22 +40,24 @@ type CreativeDriveDeps = {
   generateCreativeThought: (topics: Array<{ topic: string }>) => void;
 };
 
-// ── Состояние модуля ──────────────────────────────────────────────
+export type CreativeDriveInstance = {
+  /** Тихая остановка без лога (для повторной инициализации). */
+  dispose(): void;
+  /** Остановка с логом (для stop API). */
+  stop(): void;
+  getStats(): CreativeDriveStats;
+  getSatiation(): number;
+  boostSatiation(amount: number, reason: string): void;
+};
 
-let engine: DriveEngine | undefined;
-let logger: { info: (msg: string) => void } | undefined;
+// ── Фабрика ───────────────────────────────────────────────────────
 
-// ── Инициализация ─────────────────────────────────────────────────
-
-export function initCreativeDrive(
+export function createCreativeDrive(
   workspaceDir: string,
   cfg: BrainAgentConfig,
   log: { info: (msg: string) => void },
   injectedDeps: CreativeDriveDeps,
-): void {
-  engine?.stop();
-  logger = log;
-
+): CreativeDriveInstance {
   const c = cfg.creativeDrive;
   const driveConfig: DriveEngineConfig = {
     rewardDomains: c.creativeDomains,
@@ -65,7 +73,7 @@ export function initCreativeDrive(
     desireUpdateIntervalMs: c.desireUpdateIntervalMs,
   };
 
-  engine = new DriveEngine(
+  const engine = new DriveEngine(
     {
       id: "creative-drive",
       logName: "CreativeDrive",
@@ -98,60 +106,109 @@ export function initCreativeDrive(
   // Инсайт DMN — буст насыщения (творческий прорыв удовлетворяет драйв)
   engine.addExtraListener(
     bus.on("dmn:insight-generated", () => {
-      engine?.evaluateDecay();
-      engine?.applySatiationDelta(0.1, { persist: true });
+      engine.evaluateDecay();
+      engine.applySatiationDelta(0.1, { persist: true });
     }),
   );
 
   // Любая мысль DMN — микро-буст (сам процесс воображения питает драйв)
   engine.addExtraListener(
     bus.on("dmn:thought-generated", () => {
-      engine?.applySatiationDelta(0.05, { persist: true });
+      engine.applySatiationDelta(0.05, { persist: true });
     }),
   );
 
   // Новое переживание (квалиа) — буст насыщенности творческого опыта
   engine.addExtraListener(
     bus.on("qualia:experience-generated", () => {
-      engine?.evaluateDecay();
-      engine?.applySatiationDelta(0.07, { persist: true });
+      engine.evaluateDecay();
+      engine.applySatiationDelta(0.07, { persist: true });
     }),
   );
 
   // Сгенерирован вопрос любопытства — лёгкий дренаж (вопрос = незакрытый гештальт)
   engine.addExtraListener(
     bus.on("curiosity:question-generated", () => {
-      engine?.applySatiationDelta(-0.02);
+      engine.applySatiationDelta(-0.02);
     }),
   );
+
+  function dispose(): void {
+    engine.stop();
+  }
+
+  function stop(): void {
+    engine.stop();
+    log.info("BrainAgent CreativeDrive: stopped.");
+  }
+
+  function getStats(): CreativeDriveStats {
+    const s = engine.getStats();
+    return {
+      satiation: s.satiation,
+      needLevel: s.needLevel,
+      need: s.need,
+      lastCreativeInteractionTime: s.lastInteractionTime,
+      timeSinceLastCreation: s.timeSinceLastInteraction,
+      totalCreativeRewards: s.totalRewards,
+      totalNeedSignals: s.totalNeedSignals,
+      recentInteractionCount: s.recentInteractionCount,
+    };
+  }
+
+  function getSatiation(): number {
+    return engine.getSatiation();
+  }
+
+  function boostSatiation(amount: number, reason: string): void {
+    engine.boostSatiation(amount, reason);
+  }
+
+  return { dispose, stop, getStats, getSatiation, boostSatiation };
+}
+
+// ── Слот активного инстанса (обратная совместимость init/stop) ───
+
+let active: CreativeDriveInstance | undefined;
+
+// ── Инициализация ─────────────────────────────────────────────────
+
+export function initCreativeDrive(
+  workspaceDir: string,
+  cfg: BrainAgentConfig,
+  log: { info: (msg: string) => void },
+  injectedDeps: CreativeDriveDeps,
+): void {
+  active?.dispose();
+  active = createCreativeDrive(workspaceDir, cfg, log, injectedDeps);
 }
 
 export function stopCreativeDrive(): void {
-  engine?.stop();
-  engine = undefined;
-  logger?.info("BrainAgent CreativeDrive: stopped.");
+  active?.stop();
+  active = undefined;
 }
 
 // ── Публичный API ─────────────────────────────────────────────────
 
 export function getCreativeDriveStats(): CreativeDriveStats {
-  const s = engine?.getStats();
-  return {
-    satiation: s?.satiation ?? 0,
-    needLevel: s?.needLevel ?? "none",
-    need: s?.need ?? 0,
-    lastCreativeInteractionTime: s?.lastInteractionTime ?? 0,
-    timeSinceLastCreation: s?.timeSinceLastInteraction ?? -1,
-    totalCreativeRewards: s?.totalRewards ?? 0,
-    totalNeedSignals: s?.totalNeedSignals ?? 0,
-    recentInteractionCount: s?.recentInteractionCount ?? 0,
-  };
+  return (
+    active?.getStats() ?? {
+      satiation: 0,
+      needLevel: "none",
+      need: 0,
+      lastCreativeInteractionTime: 0,
+      timeSinceLastCreation: -1,
+      totalCreativeRewards: 0,
+      totalNeedSignals: 0,
+      recentInteractionCount: 0,
+    }
+  );
 }
 
 export function getCreativeDriveSatiation(): number {
-  return engine?.getSatiation() ?? 0;
+  return active?.getSatiation() ?? 0;
 }
 
 export function boostCreativeDriveSatiation(amount: number, reason: string): void {
-  engine?.boostSatiation(amount, reason);
+  active?.boostSatiation(amount, reason);
 }

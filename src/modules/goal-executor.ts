@@ -8,14 +8,58 @@
  *
  * Autonomy loop:
  *  DMN/Introspection → Goal creation → Vital Impulse → resolveAutonomousIntent → Agent acts
+ *
+ * v0.6.1 (волна 1 миграции на per-instance состояние):
+ *  - фабрика `createGoalExecutor()` создаёт инстанс со своим счётчиком;
+ *  - module-level `let` остался один — слот активного инстанса для
+ *    обратной совместимости init/stop; уйдёт с переходом на Cordis.
  */
 
 import type { BrainAgentConfig } from "./types.ts";
 
-// ── Module state ──────────────────────────────────────────────────
+type GoalExecutorStats = {
+  totalChecks: number;
+  totalGoalsExecuted: number;
+  lastHeartbeatTime: number;
+};
 
-let logger: { info: (msg: string) => void } | undefined;
-let totalGoalsExecuted = 0;
+export type GoalExecutorInstance = {
+  /** Increment executed goal count (called from index.ts when goals fire). */
+  record(count: number): void;
+  getStats(): GoalExecutorStats;
+  /** Остановка с логом (для stop API). */
+  stop(): void;
+};
+
+// ── Фабрика ───────────────────────────────────────────────────────
+
+export function createGoalExecutor(
+  log: { info: (msg: string) => void },
+): GoalExecutorInstance {
+  let totalGoalsExecuted = 0;
+
+  function record(count: number): void {
+    totalGoalsExecuted += count;
+  }
+
+  function getStats(): GoalExecutorStats {
+    return {
+      totalChecks: 0,
+      totalGoalsExecuted,
+      lastHeartbeatTime: 0,
+    };
+  }
+
+  function stop(): void {
+    log.info("BrainAgent GoalExecutor: stopped.");
+  }
+
+  return { record, getStats, stop };
+}
+
+// ── Слот активного инстанса (обратная совместимость init/stop) ───
+
+let active: GoalExecutorInstance | undefined;
 
 // ── Initialization ────────────────────────────────────────────────
 
@@ -23,31 +67,28 @@ export function initGoalExecutor(
   _cfg: BrainAgentConfig,
   log: { info: (msg: string) => void },
 ): void {
-  logger = log;
-  totalGoalsExecuted = 0;
-
-  logger.info("BrainAgent GoalExecutor: initialized (goals checked via vital impulse)");
+  active = createGoalExecutor(log);
+  log.info("BrainAgent GoalExecutor: initialized (goals checked via vital impulse)");
 }
 
 export function stopGoalExecutor(): void {
-  logger?.info("BrainAgent GoalExecutor: stopped.");
+  active?.stop();
+  active = undefined;
 }
 
 /** Increment executed goal count (called from index.ts when goals fire). */
 export function recordGoalExecution(count: number): void {
-  totalGoalsExecuted += count;
+  active?.record(count);
 }
 
 // ── Public API ────────────────────────────────────────────────────
 
-export function getGoalExecutorStats(): {
-  totalChecks: number;
-  totalGoalsExecuted: number;
-  lastHeartbeatTime: number;
-} {
-  return {
-    totalChecks: 0,
-    totalGoalsExecuted,
-    lastHeartbeatTime: 0,
-  };
+export function getGoalExecutorStats(): GoalExecutorStats {
+  return (
+    active?.getStats() ?? {
+      totalChecks: 0,
+      totalGoalsExecuted: 0,
+      lastHeartbeatTime: 0,
+    }
+  );
 }
