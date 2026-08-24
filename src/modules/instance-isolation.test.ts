@@ -30,8 +30,17 @@ import { createQualiaSimulator } from "./qualia-simulator.ts";
 import { createStructuralPlasticity } from "./structural-plasticity.ts";
 import { createEmergentModules } from "./emergent-modules.ts";
 import { createProactiveFeedback } from "./proactive-feedback.ts";
+import { createLLMClient } from "./llm-client.ts";
+import { createAIEmbeddings } from "./ai-embeddings.ts";
+import { createAutonomyEnricher, type AutonomyEnricherDeps } from "./autonomy-enricher.ts";
 import { bus } from "./event-bus.ts";
-import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
+import type { HostConfig } from "./host-config.ts";
+import {
+  DEFAULT_CONFIG,
+  type DopamineSignal,
+  type SemanticMemory,
+  type WorkingMemoryEntry,
+} from "./types.ts";
 
 let dirs: string[] = [];
 
@@ -614,6 +623,105 @@ describe("per-instance состояние пакета J (v0.7.0)", () => {
     expect(b.getStats().trackedDomains).toBe(0);
 
     a.stop();
+    b.stop();
+  });
+});
+
+// ── K: LLM-инфраструктура и обогащение импульсов ──────────────────
+
+describe("K: фабрики LLM-инфраструктуры изолированы", () => {
+  const silentLog = { info: () => {} };
+
+  it("фабрика llm-client хранит seam-бэкенды и хуки локально", async () => {
+    const emptyCfg = {} as unknown as HostConfig;
+
+    const a = createLLMClient();
+    const b = createLLMClient();
+    const c = createLLMClient();
+
+    a.setCallLLMBackend(async () => "ответ-A");
+    b.setCallLLMBackend(async () => "ответ-B");
+
+    // Каждый инстанс маршрутизирует через свой бэкенд
+    await expect(a.callLLM("s", "u", emptyCfg)).resolves.toBe("ответ-A");
+    await expect(b.callLLM("s", "u", emptyCfg)).resolves.toBe("ответ-B");
+    // Без бэкенда и без провайдера — тихо null
+    await expect(c.callLLM("s", "u", emptyCfg)).resolves.toBeNull();
+
+    // Хук доступности тоже локальный
+    a.setAIAvailabilityHook(() => true);
+    expect(a.isAIProviderAvailable(emptyCfg)).toBe(true);
+    expect(b.isAIProviderAvailable(emptyCfg)).toBe(false);
+  });
+
+  it("фабрика ai-embeddings независимо запоминает недоступность Ollama", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      throw new Error("connection refused");
+    }) as typeof fetch;
+
+    try {
+      const cfg = {
+        models: { providers: { ollama: { baseUrl: "http://localhost:11434" } } },
+      } as unknown as HostConfig;
+
+      const a = createAIEmbeddings();
+      const b = createAIEmbeddings();
+
+      expect(await a.getEmbedding("тест", cfg)).toBeNull();
+      expect(await a.getEmbedding("тест", cfg)).toBeNull();
+      // a запомнил недоступность — реальный запрос был один
+      expect(fetchCalls).toBe(1);
+
+      // b не видит флаг первого инстанса и пробует сам
+      expect(await b.getEmbedding("тест", cfg)).toBeNull();
+      expect(fetchCalls).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("фабрика autonomy-enricher независимо подписывается на vital-impulse", () => {
+    const semanticMem = {
+      id: "s1",
+      content: "помню разговор",
+      category: "fact",
+      relatedIds: [],
+      confidence: 0.9,
+      sourceEpisodeIds: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as SemanticMemory;
+
+    const eventsA: string[] = [];
+    const eventsB: string[] = [];
+    const makeDeps = (events: string[]): AutonomyEnricherDeps => ({
+      recallMemories: () => ({ episodic: [], semantic: [semanticMem] }),
+      getDesires: () => [],
+      enqueueSystemEvent: (text: string) => {
+        events.push(text);
+      },
+    });
+
+    const a = createAutonomyEnricher(DEFAULT_CONFIG, silentLog, makeDeps(eventsA));
+    const b = createAutonomyEnricher(DEFAULT_CONFIG, silentLog, makeDeps(eventsB));
+
+    const payload = { pressure: 0.9, signalCount: 1, motivation: "тест", consecutiveFires: 1 };
+    bus.emitSync("vital-impulse:fired", payload);
+
+    // Оба инстанса обогатили контекст своими воспоминаниями
+    expect(eventsA).toHaveLength(1);
+    expect(eventsB).toHaveLength(1);
+    expect(eventsA[0]).toContain("<autonomy-memories>");
+
+    // После stop первый отписан, второй продолжает реагировать
+    a.stop();
+    bus.emitSync("vital-impulse:fired", payload);
+    expect(eventsA).toHaveLength(1);
+    expect(eventsB).toHaveLength(2);
+
     b.stop();
   });
 });

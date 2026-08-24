@@ -7,6 +7,11 @@
  *
  * Each module provides its own system prompt and response parser;
  * this module handles the transport plumbing.
+ *
+ * v0.7.0: фабрика createLLMClient() — dsh-seam слоты (callBackend,
+ * availabilityHook) в замыкании инстанса; свободные функции — обёртки над
+ * общим ленивым инстансом. Чистые функции (resolveProvider,
+ * parseUserModelSelection) остаются на уровне модуля.
  */
 
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
@@ -157,7 +162,7 @@ function buildProviderConfig(
   };
 }
 
-/** Hardcoded fallback models per provider (used only when user has no model selected). */
+/** Hardcoded fallback model per provider (used only when user has no model selected). */
 const FALLBACK_MODELS: Record<string, string> = {
   openai: "gpt-4o-mini",
   anthropic: "claude-3-haiku-20240307",
@@ -213,14 +218,7 @@ export function resolveProvider(config: NeuroClawConfig): ProviderConfig | null 
   return null;
 }
 
-/**
- * Check if an AI provider is available.
- */
-export function isAIProviderAvailable(config: NeuroClawConfig): boolean {
-  return (availabilityHook?.() ?? false) || resolveProvider(config) !== null;
-}
-
-// ── dsh seam ─────────────────────────────────────────────────────────
+// ── dsh seam types ───────────────────────────────────────────────────
 // The harness plugin registers a backend that routes enrichment calls
 // through ctx.llm (registered provider adapters). Returning `undefined`
 // from the backend means "decline" — the env-var transport below is
@@ -234,17 +232,169 @@ export type CallLLMBackend = (
   maxTokens?: number,
 ) => Promise<string | null | undefined>;
 
-let callBackend: CallLLMBackend | undefined;
-let availabilityHook: (() => boolean) | undefined;
+// ── Instance type ───────────────────────────────────────────────────
+
+export type LLMClientInstance = {
+  setCallLLMBackend(fn: CallLLMBackend | undefined): void;
+  setAIAvailabilityHook(fn: (() => boolean) | undefined): void;
+  isAIProviderAvailable(config: NeuroClawConfig): boolean;
+  callLLM(
+    systemPrompt: string,
+    userText: string,
+    config: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+    maxTokens?: number,
+  ): Promise<string | null>;
+};
+
+// ── Factory ─────────────────────────────────────────────────────────
+
+/** Create an LLM client with isolated dsh-seam slots. */
+export function createLLMClient(): LLMClientInstance {
+  // ── State (closure) ───────────────────────────────────────────────
+  let callBackend: CallLLMBackend | undefined;
+  let availabilityHook: (() => boolean) | undefined;
+
+  function setCallLLMBackend(fn: CallLLMBackend | undefined): void {
+    callBackend = fn;
+  }
+
+  function setAIAvailabilityHook(fn: (() => boolean) | undefined): void {
+    availabilityHook = fn;
+  }
+
+  function isAIProviderAvailable(config: NeuroClawConfig): boolean {
+    return (availabilityHook?.() ?? false) || resolveProvider(config) !== null;
+  }
+
+  async function callLLM(
+    systemPrompt: string,
+    userText: string,
+    config: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+    maxTokens: number = 500,
+  ): Promise<string | null> {
+    // dsh seam: prefer the harness transport when registered.
+    if (callBackend) {
+      try {
+        const bridged = await callBackend(systemPrompt, userText, config, logger, maxTokens);
+        if (bridged !== undefined) return bridged;
+      } catch (error) {
+        logger?.info(`BrainAgent LLM: bridge failed, falling back — ${String(error)}`);
+      }
+    }
+
+    const provider = resolveProvider(config);
+    if (!provider) {
+      logger?.info("BrainAgent LLM: no AI provider configured, skipping");
+      return null;
+    }
+
+    const userSelection = parseUserModelSelection(config);
+    if (userSelection) {
+      logger?.info(`BrainAgent LLM: calling ${provider.name} (${provider.model}) [user-selected]`);
+    } else {
+      logger?.info(
+        `BrainAgent LLM: calling ${provider.name} (${provider.model}) [auto-detected]`,
+      );
+    }
+
+    try {
+      let response: Response;
+
+      if (provider.bodyFormat === "anthropic") {
+        response = await fetchWithTimeout(`${provider.baseUrl}/messages`, {
+          method: "POST",
+          headers: provider.headers,
+          body: JSON.stringify({
+            model: provider.model,
+            max_tokens: maxTokens,
+            system: systemPrompt,
+            messages: [{ role: "user", content: userText }],
+          }),
+        });
+      } else if (provider.name === "Google") {
+        const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
+        response = await fetchWithTimeout(url, {
+          method: "POST",
+          headers: provider.headers,
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userText}` }] }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: maxTokens,
+            },
+          }),
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as {
+            candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          };
+          return data.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+        }
+        const errorText = await response.text();
+        logger?.info(`BrainAgent LLM: Google error ${response.status}: ${errorText}`);
+        return null;
+      } else {
+        response = await fetchWithTimeout(`${provider.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: provider.headers,
+          body: JSON.stringify({
+            model: provider.model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userText },
+            ],
+            temperature: 0.1,
+            max_tokens: maxTokens,
+          }),
+        });
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger?.info(`BrainAgent LLM: ${provider.name} error ${response.status}: ${errorText}`);
+        return null;
+      }
+
+      const data = (await response.json()) as ChatResponse;
+
+      if (provider.bodyFormat === "anthropic") {
+        return data.content?.[0]?.text ?? null;
+      }
+      return data.choices?.[0]?.message?.content ?? null;
+    } catch (error) {
+      logger?.info(`BrainAgent LLM: error — ${String(error)}`);
+      return null;
+    }
+  }
+
+  return { setCallLLMBackend, setAIAvailabilityHook, isAIProviderAvailable, callLLM };
+}
+
+// ── Active-instance wrappers (backward-compatible API) ──────────────
+
+let active: LLMClientInstance | null = null;
+
+function current(): LLMClientInstance {
+  if (!active) active = createLLMClient();
+  return active;
+}
 
 /** Register (or clear) the dsh ctx.llm transport backend. */
 export function setCallLLMBackend(fn: CallLLMBackend | undefined): void {
-  callBackend = fn;
+  current().setCallLLMBackend(fn);
 }
 
 /** Register (or clear) an extra availability signal (e.g. ctx.llm routes). */
 export function setAIAvailabilityHook(fn: (() => boolean) | undefined): void {
-  availabilityHook = fn;
+  current().setAIAvailabilityHook(fn);
+}
+
+/** Check if an AI provider is available. */
+export function isAIProviderAvailable(config: NeuroClawConfig): boolean {
+  return current().isAIProviderAvailable(config);
 }
 
 /**
@@ -259,96 +409,5 @@ export async function callLLM(
   logger?: { info: (msg: string) => void },
   maxTokens: number = 500,
 ): Promise<string | null> {
-  // dsh seam: prefer the harness transport when registered.
-  if (callBackend) {
-    try {
-      const bridged = await callBackend(systemPrompt, userText, config, logger, maxTokens);
-      if (bridged !== undefined) return bridged;
-    } catch (error) {
-      logger?.info(`BrainAgent LLM: bridge failed, falling back — ${String(error)}`);
-    }
-  }
-
-  const provider = resolveProvider(config);
-  if (!provider) {
-    logger?.info("BrainAgent LLM: no AI provider configured, skipping");
-    return null;
-  }
-
-  const userSelection = parseUserModelSelection(config);
-  if (userSelection) {
-    logger?.info(`BrainAgent LLM: calling ${provider.name} (${provider.model}) [user-selected]`);
-  } else {
-    logger?.info(`BrainAgent LLM: calling ${provider.name} (${provider.model}) [auto-detected]`);
-  }
-
-  try {
-    let response: Response;
-
-    if (provider.bodyFormat === "anthropic") {
-      response = await fetchWithTimeout(`${provider.baseUrl}/messages`, {
-        method: "POST",
-        headers: provider.headers,
-        body: JSON.stringify({
-          model: provider.model,
-          max_tokens: maxTokens,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userText }],
-        }),
-      });
-    } else if (provider.name === "Google") {
-      const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
-      response = await fetchWithTimeout(url, {
-        method: "POST",
-        headers: provider.headers,
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userText}` }] }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: maxTokens,
-          },
-        }),
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        };
-        return data.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
-      }
-      const errorText = await response.text();
-      logger?.info(`BrainAgent LLM: Google error ${response.status}: ${errorText}`);
-      return null;
-    } else {
-      response = await fetchWithTimeout(`${provider.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: provider.headers,
-        body: JSON.stringify({
-          model: provider.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userText },
-          ],
-          temperature: 0.1,
-          max_tokens: maxTokens,
-        }),
-      });
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger?.info(`BrainAgent LLM: ${provider.name} error ${response.status}: ${errorText}`);
-      return null;
-    }
-
-    const data = (await response.json()) as ChatResponse;
-
-    if (provider.bodyFormat === "anthropic") {
-      return data.content?.[0]?.text ?? null;
-    }
-    return data.choices?.[0]?.message?.content ?? null;
-  } catch (error) {
-    logger?.info(`BrainAgent LLM: error — ${String(error)}`);
-    return null;
-  }
+  return current().callLLM(systemPrompt, userText, config, logger, maxTokens);
 }

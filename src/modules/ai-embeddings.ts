@@ -7,6 +7,11 @@
  *
  * Supports: OpenAI, Google, Ollama, OpenRouter (providers with an embeddings API).
  * Falls back gracefully if no provider is available.
+ *
+ * v0.7.0: фабрика createAIEmbeddings() — флаг недостижимости Ollama
+ * в замыкании инстанса; свободные функции — обёртки над общим ленивым
+ * инстансом. Чистые функции (resolveEmbeddingProvider,
+ * embeddingCosineSimilarity) остаются на уровне модуля.
  */
 
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
@@ -46,9 +51,6 @@ const EMBEDDING_PROVIDER_NAMES: Record<string, string> = {
 
 /** Локальная Ollama по умолчанию: бесплатные эмбеддинги без ключей (v0.2.0). */
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
-
-/** Ollama один раз не ответила — больше не дёргаем до перезапуска. */
-let ollamaUnreachable = false;
 
 /**
  * Build an EmbeddingProviderConfig for a given provider key.
@@ -142,55 +144,7 @@ export function resolveEmbeddingProvider(config: NeuroClawConfig): EmbeddingProv
   return null;
 }
 
-/**
- * Get embedding vector for a single text.
- * Returns null if the provider is unavailable or the request fails.
- */
-export async function getEmbedding(
-  text: string,
-  config: NeuroClawConfig,
-  logger?: { info: (msg: string) => void },
-): Promise<number[] | null> {
-  const result = await getEmbeddings([text], config, logger);
-  return result?.[0] ?? null;
-}
-
-/**
- * Get embedding vectors for multiple texts in a single batch.
- * Returns null if the provider is unavailable or the request fails.
- */
-export async function getEmbeddings(
-  texts: string[],
-  config: NeuroClawConfig,
-  logger?: { info: (msg: string) => void },
-): Promise<number[][] | null> {
-  const provider = resolveEmbeddingProvider(config);
-  if (!provider) {
-    return null;
-  }
-
-  // Локальная Ollama уже не ответила — не дёргаем её до перезапуска (v0.2.0)
-  if (provider.name === "Ollama" && ollamaUnreachable) {
-    return null;
-  }
-
-  if (texts.length === 0) return [];
-
-  try {
-    const result =
-      provider.format === "google"
-        ? await fetchGoogleEmbeddings(texts, provider, logger)
-        : await fetchOpenAIEmbeddings(texts, provider, logger);
-    if (result === null && provider.name === "Ollama") {
-      ollamaUnreachable = true; // нет модели/сервиса — переключаемся на TF-IDF
-    }
-    return result;
-  } catch (error) {
-    logger?.info(`BrainAgent Embeddings: ${provider.name} error — ${String(error)}`);
-    if (provider.name === "Ollama") ollamaUnreachable = true;
-    return null;
-  }
-}
+// ── Fetch helpers (stateless) ───────────────────────────────────────
 
 /**
  * OpenAI-compatible embeddings API (OpenAI, Ollama, OpenRouter).
@@ -272,6 +226,107 @@ async function fetchGoogleEmbeddings(
   if (embeddings.length !== texts.length) return null;
 
   return embeddings;
+}
+
+// ── Instance type ───────────────────────────────────────────────────
+
+export type AIEmbeddingsInstance = {
+  getEmbedding(
+    text: string,
+    config: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+  ): Promise<number[] | null>;
+  getEmbeddings(
+    texts: string[],
+    config: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+  ): Promise<number[][] | null>;
+};
+
+// ── Factory ─────────────────────────────────────────────────────────
+
+/** Create an embeddings client with an isolated Ollama-unreachable flag. */
+export function createAIEmbeddings(): AIEmbeddingsInstance {
+  // ── State (closure) ───────────────────────────────────────────────
+  /** Ollama один раз не ответила — больше не дёргаем до перезапуска. */
+  let ollamaUnreachable = false;
+
+  async function getEmbeddings(
+    texts: string[],
+    config: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+  ): Promise<number[][] | null> {
+    const provider = resolveEmbeddingProvider(config);
+    if (!provider) {
+      return null;
+    }
+
+    // Локальная Ollama уже не ответила — не дёргаем её до перезапуска (v0.2.0)
+    if (provider.name === "Ollama" && ollamaUnreachable) {
+      return null;
+    }
+
+    if (texts.length === 0) return [];
+
+    try {
+      const result =
+        provider.format === "google"
+          ? await fetchGoogleEmbeddings(texts, provider, logger)
+          : await fetchOpenAIEmbeddings(texts, provider, logger);
+      if (result === null && provider.name === "Ollama") {
+        ollamaUnreachable = true; // нет модели/сервиса — переключаемся на TF-IDF
+      }
+      return result;
+    } catch (error) {
+      logger?.info(`BrainAgent Embeddings: ${provider.name} error — ${String(error)}`);
+      if (provider.name === "Ollama") ollamaUnreachable = true;
+      return null;
+    }
+  }
+
+  async function getEmbedding(
+    text: string,
+    config: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+  ): Promise<number[] | null> {
+    const result = await getEmbeddings([text], config, logger);
+    return result?.[0] ?? null;
+  }
+
+  return { getEmbedding, getEmbeddings };
+}
+
+// ── Active-instance wrappers (backward-compatible API) ──────────────
+
+let active: AIEmbeddingsInstance | null = null;
+
+function current(): AIEmbeddingsInstance {
+  if (!active) active = createAIEmbeddings();
+  return active;
+}
+
+/**
+ * Get embedding vector for a single text.
+ * Returns null if the provider is unavailable or the request fails.
+ */
+export async function getEmbedding(
+  text: string,
+  config: NeuroClawConfig,
+  logger?: { info: (msg: string) => void },
+): Promise<number[] | null> {
+  return current().getEmbedding(text, config, logger);
+}
+
+/**
+ * Get embedding vectors for multiple texts in a single batch.
+ * Returns null if the provider is unavailable or the request fails.
+ */
+export async function getEmbeddings(
+  texts: string[],
+  config: NeuroClawConfig,
+  logger?: { info: (msg: string) => void },
+): Promise<number[][] | null> {
+  return current().getEmbeddings(texts, config, logger);
 }
 
 /**
