@@ -26,6 +26,10 @@ import { createCuriosityDrive } from "./curiosity-drive.ts";
 import { createDriveArbiter } from "./drive-arbiter.ts";
 import { createIntrospection } from "./introspection.ts";
 import { createThalamicGate } from "./thalamic-gate.ts";
+import { createQualiaSimulator } from "./qualia-simulator.ts";
+import { createStructuralPlasticity } from "./structural-plasticity.ts";
+import { createEmergentModules } from "./emergent-modules.ts";
+import { createProactiveFeedback } from "./proactive-feedback.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -543,5 +547,73 @@ describe("per-instance состояние пакета I (v0.7.0)", () => {
 
     expect(a.getIntrospectionStats().traceCount).toBe(1);
     expect(b.getIntrospectionStats().traceCount).toBe(0);
+  });
+});
+
+describe("per-instance состояние пакета J (v0.7.0)", () => {
+  it("фабрика qualia simulator создаёт независимые журналы переживаний", () => {
+    const a = createQualiaSimulator(makeDir("brainagent-qs-a-"), DEFAULT_CONFIG);
+    const b = createQualiaSimulator(makeDir("brainagent-qs-b-"), DEFAULT_CONFIG);
+
+    a.generateQualiaState("joy", 0.8, "casual");
+
+    expect(a.getStats().logSize).toBe(1);
+    expect(a.getCurrentQualia()?.emotion).toBe("joy");
+    expect(a.buildQualiaContext()).toContain("Subjective Experience");
+    // Второй инстанс не видит переживания первого
+    expect(b.getStats().logSize).toBe(0);
+    expect(b.getCurrentQualia()).toBeNull();
+    expect(b.buildQualiaContext()).toBeUndefined();
+  });
+
+  it("фабрика structural plasticity ведёт независимые циклы ко-активации", () => {
+    const a = createStructuralPlasticity(makeDir("brainagent-sp-a-"), DEFAULT_CONFIG);
+    const b = createStructuralPlasticity(makeDir("brainagent-sp-b-"), DEFAULT_CONFIG);
+
+    a.markModuleActivation("thalamus");
+    a.markModuleActivation("hippocampus");
+    a.endCycle(0.5);
+
+    expect(a.getStats().totalCycles).toBe(1);
+    expect(a.getStats().coActivationPairs).toBeGreaterThan(0);
+    // Второй инстанс не видел активаций первого
+    expect(b.getStats().totalCycles).toBe(0);
+    expect(b.getStats().coActivationPairs).toBe(0);
+  });
+
+  it("фабрика emergent modules открывает паттерны независимо", () => {
+    const a = createEmergentModules(makeDir("brainagent-em-a-"), DEFAULT_CONFIG);
+    const b = createEmergentModules(makeDir("brainagent-em-b-"), DEFAULT_CONFIG);
+
+    // 5 повторений с высоким награждением = открытие паттерна (minOccurrences=5)
+    for (let i = 0; i < 5; i++) {
+      a.recordPattern(["thalamus", "hippocampus"], "technical", 0.8);
+    }
+    b.recordPattern(["thalamus", "hippocampus"], "technical", 0.8);
+
+    expect(a.getStats().totalDiscovered).toBe(1);
+    expect(a.getEmergentModules()).toHaveLength(1);
+    // У второго инстанса только одна запись — паттерн не открыт
+    expect(b.getStats().totalDiscovered).toBe(0);
+  });
+
+  it("фабрика proactive feedback учится на отвержениях независимо", () => {
+    const a = createProactiveFeedback(makeDir("brainagent-pf-a-"), DEFAULT_CONFIG, {
+      info: () => {},
+    });
+    const b = createProactiveFeedback(makeDir("brainagent-pf-b-"), DEFAULT_CONFIG, {
+      info: () => {},
+    });
+
+    const signal = a.recordProactiveReaction("tech", "хватит об этом");
+
+    expect(signal).toBe("rejection");
+    expect(a.getStats().totalRejections).toBe(1);
+    // Второй инстанс не видит реакции первого
+    expect(b.getStats().totalRejections).toBe(0);
+    expect(b.getStats().trackedDomains).toBe(0);
+
+    a.stop();
+    b.stop();
   });
 });

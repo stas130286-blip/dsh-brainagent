@@ -6,6 +6,11 @@
  * and qualia descriptions from emotional-memory to produce a
  * unified subjective experience context that colors the agent's
  * responses with phenomenal character.
+ *
+ * v0.7.0: фабрика createQualiaSimulator(workspaceDir, config?) — всё состояние
+ * в замыкании инстанса; свободные функции — обёртки над активным инстансом.
+ * Пустой workspaceDir = detached-режим (состояние в памяти, диск не трогается) —
+ * ровно поведение модульных переменных до initQualiaSimulator.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,59 +23,6 @@ import type {
   NeuromodulatorState,
   QualiaDescription,
 } from "./types.ts";
-
-// ── State ───────────────────────────────────────────────────────────
-
-let storageDir = "";
-let currentQualia: QualiaDescription | null = null;
-let qualiaLog: QualiaDescription[] = [];
-let maxLog = 20;
-let minIntensityForInjection = 0.5;
-
-// ── Initialization ──────────────────────────────────────────────────
-
-export function initQualiaSimulator(workspaceDir: string, config: BrainAgentConfig): void {
-  storageDir = join(workspaceDir, ".brainagent", "qualia-simulator");
-  if (!existsSync(storageDir)) {
-    mkdirSync(storageDir, { recursive: true });
-  }
-  minIntensityForInjection = config.qualiaSimulator.minIntensityForInjection;
-  maxLog = 20;
-
-  // Reset in-memory state
-  currentQualia = null;
-  qualiaLog = [];
-
-  loadState();
-}
-
-function loadState(): void {
-  if (!storageDir) return;
-  try {
-    const path = join(storageDir, "state.json");
-    if (existsSync(path)) {
-      const raw = JSON.parse(readFileSync(path, "utf-8"));
-      qualiaLog = Array.isArray(raw.qualiaLog) ? raw.qualiaLog : [];
-      currentQualia = raw.currentQualia ?? null;
-    }
-  } catch {
-    qualiaLog = [];
-    currentQualia = null;
-  }
-}
-
-function persistState(): void {
-  if (!storageDir) return;
-  try {
-    writeFileSync(
-      join(storageDir, "state.json"),
-      JSON.stringify({ currentQualia, qualiaLog }, null, 2),
-      "utf-8",
-    );
-  } catch {
-    /* non-critical */
-  }
-}
 
 // ── Texture maps ────────────────────────────────────────────────────
 
@@ -109,12 +61,199 @@ const TEXTURE_MAP: Record<EmotionLabel, string> = {
   sadness: "a heavy, blue-grey weight pressing downward",
 };
 
-// ── Core API ────────────────────────────────────────────────────────
+// ── Instance type ───────────────────────────────────────────────────
+
+export type QualiaSimulatorInstance = {
+  generateQualiaState(
+    emotion: EmotionLabel,
+    intensity: number,
+    domain: MessageDomain,
+    neuroState?: NeuromodulatorState,
+    qualiaFromEmotionalMemory?: { metaphor: string; dominantColor: string },
+  ): QualiaDescription;
+  buildQualiaContext(): string | undefined;
+  getCurrentQualia(): QualiaDescription | null;
+  getQualiaLog(): QualiaDescription[];
+  getStats(): {
+    currentEmotion: EmotionLabel | null;
+    currentIntensity: number;
+    logSize: number;
+    dominantColor: string | null;
+  };
+};
+
+// ── Factory ─────────────────────────────────────────────────────────
 
 /**
- * Generate a unified qualia description for the current moment.
- * Combines emotion, neuromodulator state, and domain context.
+ * Create a qualia-simulator instance with isolated state.
+ * Empty workspaceDir = detached instance: state lives in memory,
+ * disk is never touched (identical to pre-init module behavior).
  */
+export function createQualiaSimulator(
+  workspaceDir: string,
+  config?: BrainAgentConfig,
+): QualiaSimulatorInstance {
+  // ── State (closure) ───────────────────────────────────────────────
+  const storageDir = workspaceDir ? join(workspaceDir, ".brainagent", "qualia-simulator") : "";
+  let currentQualia: QualiaDescription | null = null;
+  const qualiaLog: QualiaDescription[] = [];
+  const maxLog = 20;
+  const minIntensityForInjection = config?.qualiaSimulator.minIntensityForInjection ?? 0.5;
+
+  function loadState(): void {
+    if (!storageDir) return;
+    try {
+      const path = join(storageDir, "state.json");
+      if (existsSync(path)) {
+        const raw = JSON.parse(readFileSync(path, "utf-8"));
+        qualiaLog.length = 0;
+        if (Array.isArray(raw.qualiaLog)) qualiaLog.push(...raw.qualiaLog);
+        currentQualia = raw.currentQualia ?? null;
+      }
+    } catch {
+      qualiaLog.length = 0;
+      currentQualia = null;
+    }
+  }
+
+  function persistState(): void {
+    if (!storageDir) return;
+    try {
+      writeFileSync(
+        join(storageDir, "state.json"),
+        JSON.stringify({ currentQualia, qualiaLog }, null, 2),
+        "utf-8",
+      );
+    } catch {
+      /* non-critical */
+    }
+  }
+
+  // ── Core API ──────────────────────────────────────────────────────
+
+  function generateQualiaState(
+    emotion: EmotionLabel,
+    intensity: number,
+    domain: MessageDomain,
+    neuroState?: NeuromodulatorState,
+    qualiaFromEmotionalMemory?: { metaphor: string; dominantColor: string },
+  ): QualiaDescription {
+    const now = Date.now();
+    const texture = TEXTURE_MAP[emotion] ?? TEXTURE_MAP.neutral;
+    const neuroFeel = neuroState ? describeNeuromodulatorFeel(neuroState) : "balanced";
+
+    // Build phenomenal description with variety for low-intensity states
+    const metaphor = qualiaFromEmotionalMemory?.metaphor ?? texture;
+    const dominantColor = qualiaFromEmotionalMemory?.dominantColor ?? "neutral grey";
+
+    let description: string;
+    if (intensity > 0.7) {
+      description = `Intense ${emotion}: ${texture}. Feeling ${neuroFeel}.`;
+    } else if (intensity > 0.4) {
+      description = `Moderate ${emotion}: a muted version of ${texture}. Feeling ${neuroFeel}.`;
+    } else {
+      // Add variety to low-intensity descriptions instead of always the same template
+      const faintTemplates = [
+        `Faint ${emotion}: barely perceptible, like a distant echo of ${texture}.`,
+        `A whisper of ${emotion} — ${texture}, fading at the edges.`,
+        `Subtle ${emotion}: the faintest trace of ${texture}, almost subliminal.`,
+        `${emotion} as background hum — ${texture}, present but not demanding attention.`,
+        `A gentle undercurrent of ${emotion}: ${texture}, woven into the silence.`,
+      ];
+      description = faintTemplates[now % faintTemplates.length];
+    }
+
+    const qualia: QualiaDescription = {
+      timestamp: now,
+      description,
+      metaphor,
+      intensity,
+      dominantColor,
+      emotion,
+      domain,
+    };
+
+    currentQualia = qualia;
+    qualiaLog.push(qualia);
+    if (qualiaLog.length > maxLog) {
+      qualiaLog.splice(0, qualiaLog.length - maxLog);
+    }
+
+    persistState();
+
+    bus.emitSync("qualia:state-updated", { description, intensity });
+
+    return qualia;
+  }
+
+  function buildQualiaContext(): string | undefined {
+    if (!currentQualia) return undefined;
+    if (currentQualia.intensity < minIntensityForInjection) return undefined;
+
+    const lines = [
+      "## Subjective Experience (Qualia)",
+      `Current felt state: ${currentQualia.description}`,
+      `Phenomenal quality: "${currentQualia.metaphor}"`,
+      `Dominant color: ${currentQualia.dominantColor}`,
+    ];
+
+    // Add trajectory if we have history
+    if (qualiaLog.length >= 3) {
+      const recent = qualiaLog.slice(-3);
+      const trajectory = recent.map((q) => q.emotion).join(" -> ");
+      lines.push(`Emotional trajectory: ${trajectory}`);
+    }
+
+    return lines.join("\n");
+  }
+
+  function getCurrentQualia(): QualiaDescription | null {
+    return currentQualia;
+  }
+
+  function getQualiaLog(): QualiaDescription[] {
+    return [...qualiaLog];
+  }
+
+  function getStats() {
+    return {
+      currentEmotion: currentQualia?.emotion ?? null,
+      currentIntensity: currentQualia?.intensity ?? 0,
+      logSize: qualiaLog.length,
+      dominantColor: currentQualia?.dominantColor ?? null,
+    };
+  }
+
+  // ── Init (disk) ───────────────────────────────────────────────────
+
+  if (storageDir) {
+    if (!existsSync(storageDir)) {
+      mkdirSync(storageDir, { recursive: true });
+    }
+    loadState();
+  }
+
+  return { generateQualiaState, buildQualiaContext, getCurrentQualia, getQualiaLog, getStats };
+}
+
+// ── Active-instance wrappers (backward-compatible API) ──────────────
+
+let active: QualiaSimulatorInstance | null = null;
+
+function current(): QualiaSimulatorInstance {
+  if (!active) active = createQualiaSimulator("");
+  return active;
+}
+
+export function initQualiaSimulator(workspaceDir: string, config: BrainAgentConfig): void {
+  active = createQualiaSimulator(workspaceDir, config);
+}
+
+/** Symmetric teardown — drops the active instance (no timers/subscriptions). */
+export function stopQualiaSimulator(): void {
+  active = null;
+}
+
 export function generateQualiaState(
   emotion: EmotionLabel,
   intensity: number,
@@ -122,100 +261,32 @@ export function generateQualiaState(
   neuroState?: NeuromodulatorState,
   qualiaFromEmotionalMemory?: { metaphor: string; dominantColor: string },
 ): QualiaDescription {
-  const now = Date.now();
-  const texture = TEXTURE_MAP[emotion] ?? TEXTURE_MAP.neutral;
-  const neuroFeel = neuroState ? describeNeuromodulatorFeel(neuroState) : "balanced";
-
-  // Build phenomenal description with variety for low-intensity states
-  const metaphor = qualiaFromEmotionalMemory?.metaphor ?? texture;
-  const dominantColor = qualiaFromEmotionalMemory?.dominantColor ?? "neutral grey";
-
-  let description: string;
-  if (intensity > 0.7) {
-    description = `Intense ${emotion}: ${texture}. Feeling ${neuroFeel}.`;
-  } else if (intensity > 0.4) {
-    description = `Moderate ${emotion}: a muted version of ${texture}. Feeling ${neuroFeel}.`;
-  } else {
-    // Add variety to low-intensity descriptions instead of always the same template
-    const faintTemplates = [
-      `Faint ${emotion}: barely perceptible, like a distant echo of ${texture}.`,
-      `A whisper of ${emotion} — ${texture}, fading at the edges.`,
-      `Subtle ${emotion}: the faintest trace of ${texture}, almost subliminal.`,
-      `${emotion} as background hum — ${texture}, present but not demanding attention.`,
-      `A gentle undercurrent of ${emotion}: ${texture}, woven into the silence.`,
-    ];
-    description = faintTemplates[now % faintTemplates.length];
-  }
-
-  const qualia: QualiaDescription = {
-    timestamp: now,
-    description,
-    metaphor,
-    intensity,
-    dominantColor,
+  return current().generateQualiaState(
     emotion,
+    intensity,
     domain,
-  };
-
-  currentQualia = qualia;
-  qualiaLog.push(qualia);
-  if (qualiaLog.length > maxLog) {
-    qualiaLog = qualiaLog.slice(-maxLog);
-  }
-
-  persistState();
-
-  bus.emitSync("qualia:state-updated", { description, intensity });
-
-  return qualia;
+    neuroState,
+    qualiaFromEmotionalMemory,
+  );
 }
 
-/**
- * Build subjective experience context for prompt injection.
- * Only injects when emotion intensity exceeds threshold.
- */
 export function buildQualiaContext(): string | undefined {
-  if (!currentQualia) return undefined;
-  if (currentQualia.intensity < minIntensityForInjection) return undefined;
-
-  const lines = [
-    "## Subjective Experience (Qualia)",
-    `Current felt state: ${currentQualia.description}`,
-    `Phenomenal quality: "${currentQualia.metaphor}"`,
-    `Dominant color: ${currentQualia.dominantColor}`,
-  ];
-
-  // Add trajectory if we have history
-  if (qualiaLog.length >= 3) {
-    const recent = qualiaLog.slice(-3);
-    const trajectory = recent.map((q) => q.emotion).join(" -> ");
-    lines.push(`Emotional trajectory: ${trajectory}`);
-  }
-
-  return lines.join("\n");
+  return current().buildQualiaContext();
 }
 
-/** Get the current qualia state. */
 export function getCurrentQualia(): QualiaDescription | null {
-  return currentQualia;
+  return current().getCurrentQualia();
 }
 
-/** Get the qualia log. */
 export function getQualiaLog(): QualiaDescription[] {
-  return [...qualiaLog];
+  return current().getQualiaLog();
 }
 
-/** Get diagnostics stats. */
 export function getQualiaSimulatorStats(): {
   currentEmotion: EmotionLabel | null;
   currentIntensity: number;
   logSize: number;
   dominantColor: string | null;
 } {
-  return {
-    currentEmotion: currentQualia?.emotion ?? null,
-    currentIntensity: currentQualia?.intensity ?? 0,
-    logSize: qualiaLog.length,
-    dominantColor: currentQualia?.dominantColor ?? null,
-  };
+  return current().getStats();
 }
