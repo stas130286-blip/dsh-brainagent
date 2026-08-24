@@ -50,7 +50,7 @@ import { buildHostConfig } from "./modules/host-config.ts";
 import type { HostConfig } from "./modules/host-config.ts";
 import { bus } from "./modules/event-bus.ts";
 import type { BrainAgentConfig, ModuleName } from "./modules/types.ts";
-import { Config, isAutonomousInput, mergeBrainConfig, textOfContent, truncateText } from "./plugin/config.ts";
+import { Config, findUnknownBrainKeys, isAutonomousInput, mergeBrainConfig, textOfContent, truncateText } from "./plugin/config.ts";
 import type { Logger } from "./plugin/cycles.ts";
 import { createCycleEngine } from "./plugin/cycles.ts";
 import { createAutonomousDeliverer, createAutonomousIntentResolver, createAutonomyState } from "./plugin/autonomy.ts";
@@ -154,6 +154,14 @@ export function apply(ctx: Context, config: Config) {
   };
 
   const brainConfig = mergeBrainConfig(config);
+  if (config.brain) {
+    const unknownKeys = findUnknownBrainKeys(config.brain as Record<string, unknown>);
+    if (unknownKeys.length > 0) {
+      logger.warn(
+        `BrainAgent config: неизвестные ключи brain (${unknownKeys.join(", ")}) проигнорированы — проверьте опечатки`,
+      );
+    }
+  }
   const dataDir = config.dataDir;
   mkdirSync(dataDir, { recursive: true });
 
@@ -199,15 +207,23 @@ export function apply(ctx: Context, config: Config) {
         logger.info(
           `BrainAgent Autonomy: delivery deferred — ${(error as Error).message}`,
         );
-        setTimeout(() => {
-          try {
-            agent.followup(message);
-          } catch (retryError) {
-            logger.info(
-              `BrainAgent Autonomy: delivery failed — ${(retryError as Error).message}`,
-            );
-          }
-        }, 0);
+        // Ограниченный ретрай: reentry в запись сессии обычно кратковременный.
+        const retryDelivery = (attempt: number) => {
+          setTimeout(() => {
+            try {
+              agent.followup(message);
+            } catch (retryError) {
+              if (attempt < 3) {
+                retryDelivery(attempt + 1);
+              } else {
+                logger.info(
+                  `BrainAgent Autonomy: delivery failed after ${attempt} attempts — ${(retryError as Error).message}`,
+                );
+              }
+            }
+          }, 25 * attempt);
+        };
+        retryDelivery(1);
       }
     },
     classifyDomain: (text) => classify(text),

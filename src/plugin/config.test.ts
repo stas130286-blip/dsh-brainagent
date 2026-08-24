@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Config, mergeBrainConfig } from "./config.ts";
+import { Config, findUnknownBrainKeys, mergeBrainConfig } from "./config.ts";
 import { DEFAULT_CONFIG } from "../modules/types.ts";
 
 describe("единый конфиг (m6): ключ brain прокидывает внутренние параметры", () => {
@@ -46,5 +46,34 @@ describe("единый конфиг (m6): ключ brain прокидывает 
       modules: { ...base.modules, autonomyEnricher: false },
     });
     expect(merged.modules.actionDispatcher).toBe(false);
+  });
+});
+
+describe("детектор опечаток в config.brain (ревью v0.8.1)", () => {
+  it("известные секции не помечаются", () => {
+    expect(
+      findUnknownBrainKeys({ memory: {}, vitalImpulse: {}, modules: {}, dmn: {} }),
+    ).toEqual([]);
+  });
+
+  it("опечатка в ключе секции обнаруживается", () => {
+    expect(findUnknownBrainKeys({ memroy: {}, vitlaImpulse: {} })).toEqual([
+      "memroy",
+      "vitlaImpulse",
+    ]);
+  });
+
+  it("мусорные ключи не ломают мерж и не попадают в результат", () => {
+    const base = Config({} as Config);
+    // Каст обязательен: TS ловит опечатку на этапе компиляции,
+    // а в сыром JSON-конфиге dsh такой защиты нет — её и страхует детектор.
+    const brain = { memroy: { junk: 1 }, memory: { maxEpisodicMemories: 9 } } as Record<
+      string,
+      unknown
+    >;
+    const merged = mergeBrainConfig({ ...base, brain: brain as never });
+    // Настоящая секция применена, мусорная — нет.
+    expect(merged.memory.maxEpisodicMemories).toBe(9);
+    expect((merged as Record<string, unknown>).memroy).toBeUndefined();
   });
 });

@@ -266,6 +266,15 @@ const MODULE_FLAG_MAP: Record<string, keyof BrainAgentConfig["modules"]> = {
   autonomyEnricher: "actionDispatcher",
 };
 
+/** Известные верхнеуровневые секции BrainAgentConfig.
+ *  Ошибка в ключе (brain: { memroy: ... }) иначе молча превратилась бы
+ *  в мусорное поле, которое никто не читает — Schema.any() не валидирует.
+ */
+export function findUnknownBrainKeys(brain: Record<string, unknown>): string[] {
+  const known = new Set<string>(Object.keys(DEFAULT_CONFIG));
+  return Object.keys(brain).filter((key) => !known.has(key)).sort();
+}
+
 export function mergeBrainConfig(config: Config): BrainAgentConfig {
   const modules: BrainAgentConfig["modules"] = { ...DEFAULT_CONFIG.modules };
   for (const [key, value] of Object.entries(config.modules)) {
@@ -301,7 +310,14 @@ export function mergeBrainConfig(config: Config): BrainAgentConfig {
     },
   };
   // m6: единый конфиг — секции из config.brain мержатся поверх базы.
-  const result = config.brain ? deepMergeConfig(merged, config.brain) : merged;
+  // Неизвестные верхнеуровневые ключи (опечатки) в мерж не попадают;
+  // при инициализации плагина на них предупреждает findUnknownBrainKeys.
+  const brainOverride = config.brain
+    ? Object.fromEntries(
+        Object.entries(config.brain).filter(([key]) => key in DEFAULT_CONFIG),
+      )
+    : undefined;
+  const result = brainOverride ? deepMergeConfig(merged, brainOverride) : merged;
   // Флаги верхнего уровня config.modules остаются главным источником
   // истины и перебивают результат мержа brain.modules.
   for (const [key, value] of Object.entries(config.modules)) {
