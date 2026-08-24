@@ -32,3 +32,14 @@ export function isInternalPluginMessage(text: string): boolean {
   const trimmed = text.trimStart();
   return INTERNAL_MESSAGE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
+
+/**
+ * v0.9.2: dsh вставляет в сессию служебные user-сообщения хоста —
+ * каталог скиллов в обёртке <system-reminder> (tool-skill, source
+ * skill-catalog). Это не реплики пользователя: до фильтра контур
+ * обучения классифицировал каталог, извлекал из него «факты» и
+ * заносил их в эпизодическую память (найдено боевым тестом).
+ */
+export function isHarnessSystemMessage(text: string): boolean {
+  return text.trimStart().startsWith("<system-reminder>");
+}

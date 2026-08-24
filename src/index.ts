@@ -120,7 +120,7 @@ import { initStrategyBandit, stopStrategyBandit } from "./modules/strategy-bandi
 import { initMetabolicBudget, consumeEnergy } from "./modules/metabolic-budget.ts";
 import { initEmergentModules } from "./modules/emergent-modules.ts";
 import { initThalamicGate, getThalamicGateStats } from "./modules/thalamic-gate.ts";
-import { isInternalPluginMessage } from "./modules/message-guard.ts";
+import { isInternalPluginMessage, isHarnessSystemMessage } from "./modules/message-guard.ts";
 import { attachLlmBridge } from "./adapter/llm-bridge.ts";
 import { callLLM } from "./modules/llm-client.ts";
 import { registerBrainAgentCommands, setCommandStatGetters, buildStatusReport } from "./modules/commands.ts";
@@ -612,6 +612,11 @@ export function apply(ctx: Context, config: Config) {
       // пользователя — иначе привычки, любопытство и эпизоды
       // начнут учиться на нашем же внутреннем контексте (самоотравление).
       if (isInternalPluginMessage(text)) return;
+
+      // v0.9.2: служебные user-сообщения хоста (каталог скиллов dsh
+      // в <system-reminder>) тоже не реплики пользователя — контур
+      // обучения их игнорирует (иначе память учится на каталоге).
+      if (isHarnessSystemMessage(text)) return;
 
       // Track live sessions for proactive delivery routing.
       state.lastActiveAgentId = key;
