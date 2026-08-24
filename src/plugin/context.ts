@@ -45,7 +45,7 @@ import { filterContextInjections } from "../modules/attention-gate.ts";
 import { assembleContext } from "../modules/prefrontal-cortex.ts";
 import { recordInjectionCycle } from "../modules/injection-metrics.ts";
 import { isResearchIntent, executeResearch } from "../modules/autonomous-research.ts";
-import { AUTONOMOUS_TAG, textOfContent } from "./config.ts";
+import { AUTONOMOUS_TAG_PREFIX, isAutonomousInput, textOfContent } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { CycleState } from "./cycles.ts";
 import type { AutonomyState } from "./autonomy.ts";
@@ -95,7 +95,7 @@ export function createPreStepHandler(deps: PreStepDeps) {
     if (!cycle) cycle = startCycle(key, input);
     const cyc = cycle;
 
-    const isAutonomousCycle = input.startsWith(AUTONOMOUS_TAG);
+    const isAutonomousCycle = isAutonomousInput(input);
 
     // ── Autonomous research: intercept research-type autonomous cycles ──
     // When a cognitive drive or understanding desire fires, run isolated
@@ -106,9 +106,12 @@ export function createPreStepHandler(deps: PreStepDeps) {
       isAutonomousCycle &&
       isResearchIntent(state.lastAutonomousSource, input)
     ) {
+      // Framing (v0.5.1): the topic comes from after the tag, not from
+      // the deliverer's framing lines.
+      const tagStart = input.indexOf(AUTONOMOUS_TAG_PREFIX);
       const topic =
-        input
-          .replace(/<\/?autonomous-intent>/g, "")
+        (tagStart >= 0 ? input.slice(tagStart) : input)
+          .replace(/<\/?autonomous-intent[^>]*>/g, "")
           .split("\n")
           .filter((l) => l.trim().length > 5)[0]
           ?.trim() ?? "general exploration";

@@ -5,8 +5,9 @@
  * Примечание: автономный цикл прогоняется через agent/pre-step с сырым
  * <autonomous-intent>-текстом — именно так плагин создаёт цикл с
  * input, начинающимся с тега (контракт гейта и loop-breaker'а).
- * Тег — ровный, без атрибутов: детекция в плагине идёт по
- * startsWith("<autonomous-intent>") (vital-impulse генерирует именно так).
+ * v0.5.1: детекция единая (isAutonomousInput) и распознаёт ещё и
+ * доставку с фреймингом («Это не сообщение пользователя…») — она
+ * проверена отдельными сценариями внизу.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bootBrain, sleep } from "./harness.ts";
@@ -88,6 +89,53 @@ describe("eval: автономия", () => {
     );
     expect(brain.followups.length).toBe(before);
     // Подавлен именно loop-breaker'ом, а не другим гейтом доставки
+    expect(
+      brain.logs.some((l) => l.includes("previous cycle was autonomous")),
+    ).toBe(true);
+  });
+
+  it("фрейминг-доставка распознаётся гейтом как автономный цикл (v0.5.1)", async () => {
+    // Loop-breaker прошлого сценария снимается возвращением человека.
+    brain.userTurn("Я здесь.", "Отлично!");
+    await sleep(100);
+
+    // Точный вид доставки deliverer'ом: фрейминг перед тегом.
+    const framed = [
+      "Это не сообщение пользователя, а твоя собственная инициатива: ниже — то, что ты сам хочешь сказать.",
+      "Обратись к пользователю от себя, коротко и естественно. Не описывай внутренние механизмы.",
+      "",
+      '<autonomous-intent source="test">Фрейминг-доставка как автономный цикл.</autonomous-intent>',
+    ].join("\n");
+
+    // В dsh доставленное сообщение попадает в журнал как user/message —
+    // наблюдатель обязан отфильтровать его как служебное (без ошибок).
+    brain.emit({ type: "user/message", data: { content: mkContent(framed) } });
+    // Шаг агента создаёт цикл с фрейминг-входом.
+    await brain.preStep(framed);
+
+    const gate = brain.listeners["tools/pre-execute"]?.[0];
+    expect(gate).toBeDefined();
+    const decision = await gate(
+      { name: "web_search", agent: brain.agent },
+      async () => ({ kind: "allow" }),
+    );
+    expect(decision.kind).toBe("deny");
+  });
+
+  it("endCycle помечает фрейминг-цикл автономным — loop-breaker держит (v0.5.1)", async () => {
+    brain.emit({
+      type: "assistant/message",
+      data: { message: { content: mkContent("Кстати, вот что я заметил по нашему разговору.") } },
+    });
+    brain.emit({ type: "turn/end", data: {} });
+    await sleep(200);
+
+    const before = brain.followups.length;
+    forceImpulse(
+      '<autonomous-intent source="test">Попытка сразу после фрейминг-цикла.</autonomous-intent>',
+    );
+    expect(brain.followups.length).toBe(before);
+    // Подавлен именно loop-breaker'ом: endCycle увидел фрейминг как автономию.
     expect(
       brain.logs.some((l) => l.includes("previous cycle was autonomous")),
     ).toBe(true);

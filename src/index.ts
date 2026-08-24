@@ -50,7 +50,7 @@ import { buildHostConfig } from "./modules/host-config.ts";
 import type { HostConfig } from "./modules/host-config.ts";
 import { bus } from "./modules/event-bus.ts";
 import type { BrainAgentConfig, ModuleName } from "./modules/types.ts";
-import { Config, mergeBrainConfig, textOfContent, truncateText } from "./plugin/config.ts";
+import { Config, isAutonomousInput, mergeBrainConfig, textOfContent, truncateText } from "./plugin/config.ts";
 import type { Logger } from "./plugin/cycles.ts";
 import { createCycleEngine } from "./plugin/cycles.ts";
 import { createAutonomousDeliverer, createAutonomousIntentResolver, createAutonomyState } from "./plugin/autonomy.ts";
@@ -589,7 +589,7 @@ export function apply(ctx: Context, config: Config) {
         recordInteraction();
       }
 
-      const isUserMessage = !text.startsWith("<autonomous-intent>");
+      const isUserMessage = !isAutonomousInput(text);
 
       // Session bridge: detect gaps between sessions.
       if (brainConfig.modules.sessionBridge && isUserMessage) {
@@ -712,7 +712,7 @@ export function apply(ctx: Context, config: Config) {
 
     const agentId = exec.agent ? String(exec.agent.id) : state.lastActiveAgentId;
     const cycle = agentId ? cycles.get(agentId) : undefined;
-    if (!cycle?.input.startsWith("<autonomous-intent>")) return next();
+    if (!isAutonomousInput(cycle?.input ?? "")) return next();
 
     const blocked = brainConfig.autonomousResearch.blockedToolsInAutonomous;
     if (blocked.includes(exec.name)) {

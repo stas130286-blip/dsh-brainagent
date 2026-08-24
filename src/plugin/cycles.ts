@@ -57,7 +57,7 @@ import { getSocialDriveStats } from "../modules/social-drive.ts";
 import { getCognitiveHungerStats } from "../modules/cognitive-hunger.ts";
 import { getCreativeDriveStats } from "../modules/creative-drive.ts";
 import { getMasteryDriveStats } from "../modules/mastery-drive.ts";
-import { AUTONOMOUS_TAG, meetsComplexityThreshold, truncateText } from "./config.ts";
+import { isAutonomousInput, meetsComplexityThreshold, truncateText } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { AutonomyState, DriveGetters } from "./autonomy.ts";
 import { synthesizeAutonomousCycleState } from "./autonomy.ts";
@@ -245,7 +245,7 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
     if (!cycle.input.trim()) return;
 
     const input = cycle.input;
-    const isAutonomousCycle = input.startsWith(AUTONOMOUS_TAG);
+    const isAutonomousCycle = isAutonomousInput(input);
 
     // ── Autonomous cycle: synthesize emotion + domain from drive state ──
     // When the cycle was triggered by drives (not the user), derive the
