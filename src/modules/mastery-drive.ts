@@ -170,8 +170,12 @@ function wireEventListeners(): void {
   const unsubPredError = bus.on("dopamine:prediction-error", (data) => {
     if (!config) return;
     evaluateDecay();
-    // Извлекаем домен из context (строка, может содержать имя домена)
-    const domain = data.context.toLowerCase();
+    // Извлекаем домен из context формата "domain/complexity: ...".
+    // v0.2.2: берём только токен домена — раньше в домены уходила вся
+    // строка ("creative/extreme: worse than expected"), и любопытство
+    // с mastery-drive порождали мусорные «пробелы в знаниях».
+    const domain = data.context.toLowerCase().split(/[/:]/)[0].trim();
+    if (!domain) return;
     if (data.error > 0) {
       // Положительная ошибка = справились лучше ожидаемого
       const boost = Math.min(config.maxSatiationBoost, data.error * 0.15);

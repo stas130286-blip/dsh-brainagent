@@ -268,9 +268,12 @@ function buildMemoryContext(memories: {
 }
 
 function buildProceduralContext(procedures: ProceduralMemory[]): string | undefined {
-  if (procedures.length === 0) return undefined;
+  // v0.2.2: workflow без шагов ничего не даёт модели — не вливать
+  // пустой блок "Learned Workflow Available"
+  const usable = procedures.filter((p) => p.steps.length > 0);
+  if (usable.length === 0) return undefined;
 
-  const proc = procedures[0]; // Best matching procedure
+  const proc = usable[0]; // Best matching procedure
   const lines: string[] = [
     "## Learned Workflow Available",
     `Procedure: ${proc.description}`,
