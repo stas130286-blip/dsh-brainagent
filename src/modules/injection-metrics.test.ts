@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  createInjectionMetrics,
   getInjectionMetrics,
   recordInjectionCycle,
   resetInjectionMetrics,
@@ -51,5 +52,32 @@ describe("injection metrics", () => {
     expect(m.cycles).toBe(0);
     expect(m.overBudgetCycles).toBe(0);
     expect(m.maxChars).toBe(0);
+  });
+});
+
+describe("injection metrics per-instance state (v0.6.0)", () => {
+  it("фабрика создаёт независимые инстансы", () => {
+    const a = createInjectionMetrics();
+    const b = createInjectionMetrics();
+    a.record(3, 300);
+    a.record(3, 300);
+    expect(a.get().cycles).toBe(2);
+    expect(a.get().avgChars).toBe(300);
+    // Второй инстанс не видит записи первого
+    expect(b.get().cycles).toBe(0);
+    expect(b.get().avgChars).toBe(0);
+    b.record(1, 100);
+    expect(b.get().cycles).toBe(1);
+    expect(a.get().cycles).toBe(2);
+  });
+
+  it("обёртки пишут в инстанс по умолчанию и не трогают чужие инстансы", () => {
+    resetInjectionMetrics();
+    const own = createInjectionMetrics();
+    recordInjectionCycle(2, 200);
+    expect(getInjectionMetrics().cycles).toBe(1);
+    expect(own.get().cycles).toBe(0);
+    own.reset();
+    expect(getInjectionMetrics().cycles).toBe(1);
   });
 });
