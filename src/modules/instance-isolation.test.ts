@@ -33,6 +33,7 @@ import { createProactiveFeedback } from "./proactive-feedback.ts";
 import { createLLMClient } from "./llm-client.ts";
 import { createAIEmbeddings } from "./ai-embeddings.ts";
 import { createAutonomyEnricher, type AutonomyEnricherDeps } from "./autonomy-enricher.ts";
+import { createGoalStack } from "./goal-stack.ts";
 import { bus } from "./event-bus.ts";
 import type { HostConfig } from "./host-config.ts";
 import {
@@ -723,5 +724,35 @@ describe("K: фабрики LLM-инфраструктуры изолирова�
     expect(eventsB).toHaveLength(2);
 
     b.stop();
+  });
+});
+
+// ── L: goal-stack ──────────────────────────────────────────────────
+
+describe("L: фабрика goal-stack изолирована", () => {
+  it("фабрика goal-stack ведёт независимые стеки целей и желаний", () => {
+    const a = createGoalStack(makeDir("brainagent-gs-a-"), DEFAULT_CONFIG);
+    const b = createGoalStack(makeDir("brainagent-gs-b-"), DEFAULT_CONFIG);
+
+    a.createGoal(
+      "проверить почту",
+      { type: "topic", condition: "почта" },
+      "test",
+      "напомнить про почту",
+    );
+    a.addDesire("understanding", "разобраться в теме", 0.7, "test");
+
+    expect(a.getGoalStackStats().total).toBe(1);
+    expect(a.getGoalStackStats().desireCount).toBe(1);
+    expect(a.buildVolitionContext()).toContain("volition-context");
+
+    // Второй инстанс не видит целей и желаний первого
+    expect(b.getGoalStackStats().total).toBe(0);
+    expect(b.getGoalStackStats().desireCount).toBe(0);
+    expect(b.buildVolitionContext()).toBeUndefined();
+
+    // Триггеры тоже локальные: у b нет цели со словом "почта"
+    expect(a.checkGoalTriggers("почта ждёт проверки")).toHaveLength(1);
+    expect(b.checkGoalTriggers("почта ждёт проверки")).toHaveLength(0);
   });
 });
