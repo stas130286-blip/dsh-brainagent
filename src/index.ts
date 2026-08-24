@@ -185,12 +185,30 @@ export function apply(ctx: Context, config: Config) {
     logger,
     pickAgent,
     deliver: (agent, framed) => {
-      agent.followup(
-        createUserMessage({
-          content: [{ type: "text", text: framed }],
-          source: { kind: "cron", plugin: "brainagent" },
-        }),
-      );
+      const message = createUserMessage({
+        content: [{ type: "text", text: framed }],
+        source: { kind: "cron", plugin: "brainagent" },
+      });
+      try {
+        agent.followup(message);
+      } catch (error) {
+        // Reentry в Session.append: вызов приходит из шины событий,
+        // когда dsh публикует другую запись сессии. Без защиты ошибка
+        // «session append cannot reenter» роняет весь процесс dsh —
+        // повторяем доставку на следующем тике.
+        logger.info(
+          `BrainAgent Autonomy: delivery deferred — ${(error as Error).message}`,
+        );
+        setTimeout(() => {
+          try {
+            agent.followup(message);
+          } catch (retryError) {
+            logger.info(
+              `BrainAgent Autonomy: delivery failed — ${(retryError as Error).message}`,
+            );
+          }
+        }, 0);
+      }
     },
     classifyDomain: (text) => classify(text),
     isDomainSuppressed,
