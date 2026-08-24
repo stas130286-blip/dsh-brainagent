@@ -20,6 +20,8 @@ import { createNeuralPathways } from "./neural-pathways.ts";
 import { createHippocampus } from "./hippocampus.ts";
 import { createEmotionalMemory } from "./emotional-memory.ts";
 import { createSessionBridge } from "./session-bridge.ts";
+import { createDreamMode } from "./dream-mode.ts";
+import { createDMN } from "./dmn.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -376,6 +378,55 @@ describe("per-instance состояние пакета F (v0.6.7)", () => {
     // Второй инстанс не видит циклы первого
     expect(b.getSessionBridgeStats().currentCycles).toBe(0);
     expect(b.getSessionBridgeStats().gapDetected).toBe(false);
+
+    a.stop();
+    b.stop();
+  });
+});
+
+describe("per-instance состояние пакета G (v0.6.8)", () => {
+  it("фабрика dream mode создаёт независимые сервисы консолидации", () => {
+    const a = createDreamMode();
+    const b = createDreamMode();
+
+    a.start(DEFAULT_CONFIG);
+
+    expect(a.getStats().isRunning).toBe(true);
+    // Второй инстанс не запущен
+    expect(b.getStats().isRunning).toBe(false);
+
+    a.stop();
+    expect(a.getStats().isRunning).toBe(false);
+    expect(b.getStats().lastConsolidation).toBe(0);
+  });
+
+  it("фабрика DMN создаёт независимые внутренние монологи", () => {
+    const a = createDMN(makeDir("brainagent-dmn-a-"), DEFAULT_CONFIG);
+    const b = createDMN(makeDir("brainagent-dmn-b-"), DEFAULT_CONFIG);
+
+    a.generateBackgroundThoughts(DEFAULT_CONFIG, ["What is quantum gravity?"]);
+
+    expect(a.getStats().backgroundThoughts).toBe(1);
+    expect(a.getInnerMonologue()).toHaveLength(1);
+    // Второй инстанс не видит мысли первого
+    expect(b.getStats().backgroundThoughts).toBe(0);
+    expect(b.getInnerMonologue()).toHaveLength(0);
+    expect(b.buildBackgroundThoughtContext()).toBeUndefined();
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика DMN с пустым dir живёт в памяти и не трогает диск", () => {
+    const a = createDMN("");
+    const b = createDMN("");
+
+    a.generateBackgroundThoughts(DEFAULT_CONFIG, undefined, [
+      { emotion: "frustration", intensity: 0.8 },
+    ]);
+
+    expect(a.getStats().backgroundThoughts).toBe(1);
+    expect(b.getStats().backgroundThoughts).toBe(0);
 
     a.stop();
     b.stop();

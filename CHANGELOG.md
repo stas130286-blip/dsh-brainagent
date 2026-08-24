@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.8 — 2026-08-24
+
+Волна 2, пакет G — «консолидация и фоновые мысли» на per-instance состояние:
+
+- `dream-mode` → `createDreamMode()`: таймер консолидации, флаги isConsolidating,
+  версия семантического хранилища для пропуска AI-ревью и сохранённые ссылки для
+  циркадного колбэка — в инстансе. Внешний API (startDreamMode/stopDreamMode/
+  forceConsolidation/getDreamStats) — обёртки над слотом активного инстанса.
+- `dmn` → `createDMN(workspaceDir, config?, log?)`: инсайты кросс-доменных ассоциаций,
+  внутренний монолог фоновых мыслей, счётчики и персистентность state.json — в инстансе.
+  Пустой workspaceDir = detached-режим (состояние в памяти, диск не трогается).
+  Добавлен симметричный `stopDMN`.
+- +3 теста в `instance-isolation.test.ts` (итого 21): независимый запуск dream-mode,
+  независимые монологи DMN, detached-режим DMN с пустым dir.
+- Поведение плагина не меняется: 731 тест / 42 файла, tsc чисто, esbuild и smoke OK.
+
 ## 0.6.7 — 2026-08-24
 
 Волна 2 миграции на per-instance состояние (пакет F): hippocampus, emotional-memory, session-bridge — группа «память и консолидация». Внешний API не меняется.
