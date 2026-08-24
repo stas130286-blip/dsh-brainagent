@@ -58,6 +58,47 @@ const OPTIONAL_BLOCK_PREFIXES = [
   "<proactive-insight>",
 ];
 
+const CLOCK_WEEKDAYS = [
+  "воскресенье",
+  "понедельник",
+  "вторник",
+  "среда",
+  "четверг",
+  "пятница",
+  "суббота",
+] as const;
+
+const CLOCK_MONTHS = [
+  "января",
+  "февраля",
+  "марта",
+  "апреля",
+  "мая",
+  "июня",
+  "июля",
+  "августа",
+  "сентября",
+  "октября",
+  "ноября",
+  "декабря",
+] as const;
+
+/**
+ * v0.9.5: точные локальные дата и время для инъекции контекста.
+ * Хост не сообщает модели календарное время — без этого блока агент
+ * не ориентируется в годах/месяцах/днях и не может считать сроки.
+ */
+export function buildClockContext(now: Date = new Date()): string {
+  const weekday = CLOCK_WEEKDAYS[now.getDay()];
+  const month = CLOCK_MONTHS[now.getMonth()];
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return (
+    `## Current date and time\n` +
+    `${weekday}, ${now.getDate()} ${month} ${now.getFullYear()} г., ${hh}:${mm} (местное время).`
+  );
+}
+
 export type PreStepDeps = {
   config: Config;
   brainConfig: BrainAgentConfig;
@@ -352,6 +393,12 @@ export function createPreStepHandler(deps: PreStepDeps) {
       const interoCtx = buildInteroceptionContext();
       if (interoCtx) injections.push(interoCtx);
     }
+
+    // v0.9.5: календарные часы — хост не передаёт модели текущие
+    // дату и время, из-за чего агент не мог рассуждать о сроках
+    // («эта неделя», «завтра»). Блок обязателен: без него любые
+    // временные напоминания теряют точку отсчёта.
+    injections.push(buildClockContext());
 
     // Temporal awareness: subjective sense of time passing.
     if (brainConfig.modules.temporalAwareness) {

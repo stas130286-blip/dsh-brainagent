@@ -723,7 +723,9 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
 
     logger?.info("BrainAgent GoalStack: extracting goals from conversation...");
 
-    const response = await callLLM(GOAL_EXTRACTION_PROMPT, userMessage, config, logger, 300);
+    // v0.9.5: промпт знает текущие дату и время — иначе LLM не может
+    // вычислить, когда наступит «завтра» или «конец недели».
+    const response = await callLLM(buildGoalExtractionPrompt(), userMessage, config, logger, 300);
     if (!response) {
       logger?.info("BrainAgent GoalStack: LLM returned null/empty response");
       return [];
@@ -785,13 +787,27 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
       if (isDuplicate) continue;
 
       const validTypes = ["topic", "time", "emotion", "idle"] as const;
-      const type = validTypes.includes(triggerType as (typeof validTypes)[number])
+      let type = validTypes.includes(triggerType as (typeof validTypes)[number])
         ? (triggerType as GoalTrigger["type"])
         : "topic";
+      let condition = triggerCondition;
+      // v0.9.5: LLM отдаёт time-условия ISO-датой («2026-08-28T09:00»),
+      // потому что epoch-миллисекунды модели недоступны. Конвертируем
+      // в epoch мс — формат, который понимают time-триггеры.
+      if (type === "time") {
+        const parsed = parseTimeTriggerCondition(triggerCondition);
+        if (parsed === undefined) {
+          logger?.info(
+            `BrainAgent GoalStack: skipping goal with unparseable time condition: ${triggerCondition}`,
+          );
+          continue;
+        }
+        condition = String(parsed);
+      }
 
       const goal = createGoal(
         description,
-        { type, condition: triggerCondition },
+        { type, condition },
         "llm-extraction",
         contextInjection,
         Math.max(0, Math.min(1, priority)),
@@ -908,9 +924,38 @@ export function resetExtractionThrottle(): void {
   // No-op: throttle removed. Rate limiting is done by interaction counter in index.ts.
 }
 
-const GOAL_EXTRACTION_PROMPT = `You are a goal-extraction module for an AI cognitive architecture.
+/**
+ * v0.9.5: время-триггеры условий. Условие может быть epoch-миллисекундами
+ * (старые сохранённые цели) или ISO-датой от LLM («2026-08-28T09:00»).
+ * Возвращает epoch мс либо undefined, если условие не распознано.
+ */
+export function parseTimeTriggerCondition(condition: string): number | undefined {
+  const trimmed = condition.trim();
+  if (!trimmed) return undefined;
+  // Отсекаем экзотику парсера дат («-5» у V8 парсится как дата).
+  const minSane = Date.UTC(2000, 0, 1);
+  const asNumber = Number(trimmed);
+  if (Number.isFinite(asNumber) && asNumber >= minSane) return asNumber;
+  // Date.parse всеяден — принимаем только явный ISO-вид
+  // «YYYY-MM-DD[THH:MM]», который просим у LLM в промпте.
+  if (!/^\d{4}-\d{2}(-\d{2})?([T ]\d.*)?$/.test(trimmed)) return undefined;
+  const asDate = Date.parse(trimmed);
+  if (!Number.isNaN(asDate) && asDate >= minSane) return asDate;
+  return undefined;
+}
+
+/**
+ * v0.9.5: промпт извлечения целей включает текущие дату и время —
+ * без них LLM не может превратить «завтра»/«к концу недели» в дату.
+ */
+export function buildGoalExtractionPrompt(now: Date = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const iso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  return `You are a goal-extraction module for an AI cognitive architecture.
 Given a user message, identify 0-3 proactive goals or intentions the user has expressed (explicitly or implicitly).
 Only extract if the user expresses an intention, need, wish, or plan.
+
+Current local date and time: ${iso}.
 
 Output ONLY valid JSON: an array of objects (or empty array []):
 [{"description": "...", "trigger_type": "topic|time|emotion", "trigger_condition": "keyword or condition", "context_injection": "reminder text for the AI", "priority": 0.5, "recurring_interval_minutes": null, "is_social": false}]
@@ -919,12 +964,14 @@ Rules:
 - description: concise goal text (max 100 chars)
 - trigger_type: "topic" (re-mention keyword), "time" (time-based), or "emotion" (emotional state)
 - trigger_condition: the keyword/time/emotion that should trigger the goal
+- for trigger_type "time": compute the reminder moment from the current date and time above and put it into trigger_condition as a local ISO datetime "YYYY-MM-DDTHH:MM" (for example, "tomorrow morning" means the next day at 09:00). Never use a moment in the past.
 - context_injection: what the AI should be reminded of when the goal triggers
 - priority: 0.0-1.0 (how important)
 - recurring_interval_minutes: if this is a recurring activity (e.g. "check social network every 30 min"), set to the interval in minutes. Only set if user explicitly specifies an interval. Otherwise null.
 - is_social: true if goal involves social interaction, messaging, chatting, engaging with communities/platforms/networks/people. false otherwise.
 - Return [] if no goals detected. Do not invent goals.
 - No markdown, no extra text — JSON only`;
+}
 
 // ── Active-instance wrappers (backward-compatible API) ──────────────
 
