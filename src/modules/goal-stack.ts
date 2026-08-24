@@ -1058,3 +1058,18 @@ export async function extractGoalsFromConversation(
 export function checkAutonomousGoals(idleMs?: number): Goal[] {
   return current().checkAutonomousGoals(idleMs);
 }
+
+/**
+ * v0.9.4: индикатор явного целеполагания в реплике пользователя.
+ * Периодическое извлечение целей (раз в extractionInterval реплик)
+ * анализирует только текущую реплику — цель, сформулированная в
+ * «не тот» цикл, терялась для Goal Stack (боевой тест h6: план
+ * «написать пост и обновить README» не создал целей). Явные
+ * формулировки извлекаем сразу.
+ */
+const GOAL_INTENT_PATTERN =
+  /планирую|запланир|моя цель|мои цели|поставь цель|надо не забыть|не забудь|напомни мне|хочу успеть|задачи на (?:неделю|сегодня|завтра)|\bgoal\b|\bplan\b|\btodo\b|remind me/i;
+
+export function hasGoalIntent(text: string): boolean {
+  return GOAL_INTENT_PATTERN.test(text);
+}

@@ -51,6 +51,7 @@ import {
   getDesires,
   addDesire,
   extractGoalsFromConversation,
+  hasGoalIntent,
   tickExplorationBoosts,
 } from "../modules/goal-stack.ts";
 import { getSocialDriveStats } from "../modules/social-drive.ts";
@@ -615,10 +616,14 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
       }
     }
 
-    // Goal stack: periodic LLM-based goal extraction.
+    // Goal stack: LLM-based goal extraction. v0.9.4: явные
+    // формулировки целей («планирую…», «напомни…») извлекаются
+    // сразу; периодика раз в extractionInterval реплик сохранена
+    // как фоновый механизм для неявных целей.
     if (brainConfig.modules.goalStack && input.length > 10) {
       goalExtractionCounter++;
-      if (goalExtractionCounter >= brainConfig.goalStack.extractionInterval) {
+      const explicitGoalIntent = hasGoalIntent(input);
+      if (explicitGoalIntent || goalExtractionCounter >= brainConfig.goalStack.extractionInterval) {
         goalExtractionCounter = 0;
         logger.info(
           `BrainAgent GoalStack: triggering goal extraction (every ${brainConfig.goalStack.extractionInterval} interactions)`,
