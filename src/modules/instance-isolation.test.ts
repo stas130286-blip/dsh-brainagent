@@ -36,6 +36,7 @@ import { createAutonomyEnricher, type AutonomyEnricherDeps } from "./autonomy-en
 import { createGoalStack } from "./goal-stack.ts";
 import { createAgentIdentity } from "./agent-identity.ts";
 import { createMasteryDrive } from "./mastery-drive.ts";
+import { createVitalImpulse } from "./vital-impulse.ts";
 import { bus } from "./event-bus.ts";
 import type { HostConfig } from "./host-config.ts";
 import {
@@ -815,6 +816,33 @@ describe("N: фабрика mastery-drive изолирована", () => {
     bus.emitSync("dopamine:prediction-error", { error: 0.5, context: "creative/simple" });
     expect(a.getStats().domainSatiations.creative).toBeUndefined();
     expect(b.getStats().domainSatiations.creative).toBeGreaterThan(0);
+    b.stop();
+  });
+});
+
+// ── O: vital-impulse ──────────────────────────────────────────────
+
+describe("O: фабрика vital-impulse изолирована", () => {
+  it("фабрика vital-impulse независимо копит давление и снимает подписки", () => {
+    const silentLog = { info: () => {} };
+    const noopDeps = {
+      requestHeartbeatNow: () => {},
+      enqueueSystemEvent: () => {},
+    };
+
+    const a = createVitalImpulse(makeDir("brainagent-vi-a-"), DEFAULT_CONFIG, silentLog, noopDeps);
+    const b = createVitalImpulse(makeDir("brainagent-vi-b-"), DEFAULT_CONFIG, silentLog, noopDeps);
+
+    // Сигнал шины — давление копится у каждого инстанса своё
+    bus.emitSync("dmn:insight-generated", { insightId: "o-1", description: "идея" });
+    expect(a.getStats().currentPressure).toBeCloseTo(0.4, 2);
+    expect(b.getStats().currentPressure).toBeCloseTo(0.4, 2);
+
+    // stop() снимает подписки: следующий сигнал доходит только до b
+    a.stop();
+    bus.emitSync("dmn:insight-generated", { insightId: "o-2", description: "ещё идея" });
+    expect(a.getStats().totalSignalsReceived).toBe(1);
+    expect(b.getStats().totalSignalsReceived).toBe(2);
     b.stop();
   });
 });
