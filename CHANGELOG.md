@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0 — 2026-08-24
+
+m5 + m6: Cordis-провайдер сервисов и единый конфиг.
+
+- m5 (пакет Q): `src/plugin/service.ts` — фасад `ctx.brainagent`
+  (`status`/`recall`/`storeFact`/`storeEpisode`/`getDesires`/`addDesire`/`modules`).
+  Регистрация через `ctx.provide` с жизненным циклом файбера Cordis:
+  сервис автоматически снимается при выгрузке файбера-провайдера.
+  Потребители подключаются через `inject: ["brainagent"]`;
+  типизация `ctx.brainagent` через module augmentation `@deepseek-ai/cordis`.
+- m6 (пакет R): единый конфиг — новый необязательный ключ `config.brain`
+  (`DeepPartial<BrainAgentConfig>`) для переопределения любых внутренних
+  секций прямо из конфига dsh. Рекурсивный глубокий мерж `deepMergeConfig`:
+  объекты мержатся, массивы/примитивы заменяются, дефолты сохраняются.
+  Флаги верхнего уровня `config.modules` остаются главным источником истины.
+- 6 новых тестов: 4 — единый конфиг (`src/plugin/config.test.ts`),
+  2 — изоляция сервиса в `instance-isolation.test.ts` (блок Q).
+- `vitest.config.ts`: включены `src/plugin/**/*.test.ts`.
+
+Проверки: tsc 0 ошибок, 755/755 тестов (43 файла), esbuild-бандл 613.5kb,
+smoke-phase2/3 ОК.
+
 ## 0.7.0 — 2026-08-24
 
 Все 42 модуля когнитивной архитектуры — на фабриках с per-instance состоянием
