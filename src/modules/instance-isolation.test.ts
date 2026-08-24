@@ -17,6 +17,9 @@ import { createDopamineSystem } from "./dopamine-system.ts";
 import { createStrategyBandit } from "./strategy-bandit.ts";
 import { createLearningCoordinator } from "./learning-coordinator.ts";
 import { createNeuralPathways } from "./neural-pathways.ts";
+import { createHippocampus } from "./hippocampus.ts";
+import { createEmotionalMemory } from "./emotional-memory.ts";
+import { createSessionBridge } from "./session-bridge.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -320,6 +323,59 @@ describe("per-instance состояние пакета E (v0.6.6)", () => {
     a.resetCycleState();
     expect(a.getPathwayStats().currentHabitId).toBeUndefined();
     expect(b.getPathwayStats().currentHabitId).toBe("iso-habit");
+
+    a.stop();
+    b.stop();
+  });
+});
+
+describe("per-instance состояние пакета F (v0.6.7)", () => {
+  it("фабрика hippocampus создаёт независимые хранилища памяти", () => {
+    const a = createHippocampus(makeDir("brainagent-hc-a-"));
+    const b = createHippocampus(makeDir("brainagent-hc-b-"));
+
+    a.storeFact("The sky is blue", "general");
+    a.storeEpisode("test event", "event summary");
+
+    expect(a.getStats().semantic).toBe(1);
+    expect(a.getStats().episodic).toBe(1);
+    expect(a.recallFacts("sky").length).toBeGreaterThan(0);
+    // Второй инстанс не видит факты и эпизоды первого
+    expect(b.getStats().semantic).toBe(0);
+    expect(b.getStats().episodic).toBe(0);
+    expect(b.recallFacts("sky")).toEqual([]);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика emotional memory создаёт независимые счётчики и историю qualia", () => {
+    const a = createEmotionalMemory(makeDir("brainagent-em-a-"), DEFAULT_CONFIG);
+    const b = createEmotionalMemory(makeDir("brainagent-em-b-"), DEFAULT_CONFIG);
+
+    a.tagEmotionalContext("joy", 0.9);
+    a.generateQualia("joy", 0.8, "technical");
+
+    expect(a.getEmotionalMemoryStats().flashbulbCount).toBe(1);
+    expect(a.getQualiaHistory()).toHaveLength(1);
+    // Второй инстанс не видит тегов и историю первого
+    expect(b.getEmotionalMemoryStats().flashbulbCount).toBe(0);
+    expect(b.getQualiaHistory()).toHaveLength(0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика session bridge создаёт независимые аккумуляторы сессий", () => {
+    const a = createSessionBridge(makeDir("brainagent-sbr-a-"), DEFAULT_CONFIG);
+    const b = createSessionBridge(makeDir("brainagent-sbr-b-"), DEFAULT_CONFIG);
+
+    a.recordCycleForSession("hello");
+
+    expect(a.getSessionBridgeStats().currentCycles).toBe(1);
+    // Второй инстанс не видит циклы первого
+    expect(b.getSessionBridgeStats().currentCycles).toBe(0);
+    expect(b.getSessionBridgeStats().gapDetected).toBe(false);
 
     a.stop();
     b.stop();

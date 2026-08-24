@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.7 — 2026-08-24
+
+Волна 2 миграции на per-instance состояние (пакет F): hippocampus, emotional-memory, session-bridge — группа «память и консолидация». Внешний API не меняется.
+
+- `hippocampus`, `emotional-memory`, `session-bridge` переведены на фабрики (`createHippocampus`, `createEmotionalMemory`, `createSessionBridge`): три слоя памяти + векторные индексы + кэш эмбеддингов, flashbulb-теги + история qualia с LLM-кэшем, аккумулятор сессий + детектор пауз — всё инкапсулировано в инстансах
+- Модули не подписываются на шину (только публикуют события), поэтому до инициализации работает ленивый detached-инстанс: состояние в памяти, диск не трогается — точное поведение оригинала до init
+- Чистые функции (`computeFlashbulbSalience`, `parseLLMQualiaResponse`, помощники извлечения ключ/значение фактов, промпт консолидации) остались свободными; добавлены симметричные `stopMemoryStorage`/`stopEmotionalMemory`/`stopSessionBridge`, stop снимает отложенные записи кэша эмбеддингов
+- +3 теста (instance-isolation.test.ts расширен до 18): изоляция хранилищ памяти, счётчиков flashbulb/qualia и аккумуляторов сессий между независимыми инстансами
+- 728 тестов / 42 файла; tsc чисто, smoke OK
+
 ## 0.6.6 — 2026-08-24
 
 Волна 2 миграции на per-instance состояние (пакет E): strategy-bandit, learning-coordinator, neural-pathways — группа «ступени обучения». Внешний API не меняется.
