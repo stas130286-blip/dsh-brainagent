@@ -82,7 +82,11 @@ export function attachLlmBridge(ctx: Context, preferredModel?: string): () => vo
           }),
         ],
         temperature: 0.1,
-        maxTokens: maxTokens ?? 500,
+        // v0.9.4: reasoning-модели (deepseek-v4-flash) тратят часть
+        // бюджета на reasoning-delta ДО текста; маленький бюджет
+        // (100–500) выгорал в reasoning, и ответ возвращался пустым
+        // (найдено отладкой h6f: goal/semantic-вызовы textLen=0).
+        maxTokens: Math.max(1000, (maxTokens ?? 500) * 4),
       });
 
       let text = "";

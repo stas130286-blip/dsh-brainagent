@@ -622,7 +622,11 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
     // как фоновый механизм для неявных целей.
     if (brainConfig.modules.goalStack && input.length > 10) {
       goalExtractionCounter++;
-      const explicitGoalIntent = hasGoalIntent(input);
+      // v0.9.4: автономные циклы (<goal_round>… и инициативы) содержат
+      // слова «цель»/«план» — детектор срабатывал на них каждые
+      // 2 секунды и впустую дёргал LLM. Явное извлечение — только
+      // на репликах пользователя.
+      const explicitGoalIntent = !isAutonomousCycle && hasGoalIntent(input);
       if (explicitGoalIntent || goalExtractionCounter >= brainConfig.goalStack.extractionInterval) {
         goalExtractionCounter = 0;
         logger.info(
