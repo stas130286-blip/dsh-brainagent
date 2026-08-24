@@ -13,7 +13,7 @@
  * с наших служебных маркеров, игнорируются контуром обучения.
  */
 
-import { AUTONOMOUS_FRAME_PREFIX } from "../plugin/config.ts";
+import { AUTONOMOUS_FRAME_PREFIX } from "./autonomy-markers.ts";
 
 /** Служебные маркеры собственных сообщений плагина. */
 export const INTERNAL_MESSAGE_PREFIXES = [

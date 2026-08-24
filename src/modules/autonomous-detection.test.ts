@@ -6,6 +6,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { isAutonomousInput } from "../plugin/config.ts";
+import {
+  AUTONOMOUS_FRAME_PREFIX,
+  AUTONOMOUS_FRAMING_LINES,
+} from "./autonomy-markers.ts";
 import { isInternalPluginMessage } from "./message-guard.ts";
 
 const TAGGED = "<autonomous-intent>\nПоделиться мыслью.\n</autonomous-intent>";
@@ -50,5 +54,19 @@ describe("message-guard: фрейминг-доставка (v0.5.1)", () => {
 
   it("обычные сообщения проходят", () => {
     expect(isInternalPluginMessage("Привет!")).toBe(false);
+  });
+});
+
+describe("v0.5.2: фрейминг и детекция из одного источника", () => {
+  it("префикс детекции — сама первая строка фрейминга", () => {
+    expect(AUTONOMOUS_FRAME_PREFIX).toBe(AUTONOMOUS_FRAMING_LINES[0]);
+  });
+
+  it("текст deliverer'а (фрейминг + тег) проходит детекцию и guard", () => {
+    // createAutonomousDeliverer собирает доставку ровно так
+    // (без подсказок отвергнутых тем — они третьей строкой).
+    const delivered = [...AUTONOMOUS_FRAMING_LINES, "", TAGGED].join("\n");
+    expect(isAutonomousInput(delivered)).toBe(true);
+    expect(isInternalPluginMessage(delivered)).toBe(true);
   });
 });

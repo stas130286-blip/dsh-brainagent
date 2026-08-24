@@ -280,35 +280,16 @@ export function mergeBrainConfig(config: Config): BrainAgentConfig {
   };
 }
 
-/**
- * Marker tag wrapping autonomous (self-initiated) messages. The model
- * sees the tag in its log; the plugin uses it to tell autonomous cycles
- * apart from real user messages.
- */
-export const AUTONOMOUS_TAG = "<autonomous-intent>";
-/**
- * Prefix check used when framing deliveries: matches both the plain tag
- * and tagged variants with attributes ("<autonomous-intent source=...>").
- */
-export const AUTONOMOUS_TAG_PREFIX = "<autonomous-intent";
-/**
- * v0.5.1: opening line of the framing the proactive deliverer prepends
- * before the tag (createAutonomousDeliverer). Detection points must
- * recognize framed deliveries too, not only the bare tag — otherwise
- * the delivered prompt is treated as a user message.
- */
-export const AUTONOMOUS_FRAME_PREFIX = "Это не сообщение пользователя";
-
-/**
- * Unified autonomous-input detection (v0.5.1): the bare tag, a tag with
- * attributes ("<autonomous-intent source=...>"), or the deliverer
- * framing prepended before the tag.
- */
-export function isAutonomousInput(text: string): boolean {
-  const trimmed = text.trimStart();
-  if (trimmed.startsWith(AUTONOMOUS_TAG_PREFIX)) return true;
-  return trimmed.startsWith(AUTONOMOUS_FRAME_PREFIX) && trimmed.includes(AUTONOMOUS_TAG_PREFIX);
-}
+// v0.5.2: маркеры автономии живут в слое modules (autonomy-markers.ts) —
+// тег, фрейминг доставки и их детекция в одном файле и не могут разойтись.
+// Здесь только реэкспорт для совместимости существующих импортов.
+export {
+  AUTONOMOUS_TAG,
+  AUTONOMOUS_TAG_PREFIX,
+  AUTONOMOUS_FRAME_PREFIX,
+  AUTONOMOUS_FRAMING_LINES,
+  isAutonomousInput,
+} from "../modules/autonomy-markers.ts";
 
 /** Extract plain text from an LLM message content block list. */
 export function textOfContent(content: readonly unknown[]): string {

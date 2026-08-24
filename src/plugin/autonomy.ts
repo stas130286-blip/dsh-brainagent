@@ -23,7 +23,7 @@ import type {
   Goal,
   MessageDomain,
 } from "../modules/types.ts";
-import { AUTONOMOUS_TAG, AUTONOMOUS_TAG_PREFIX } from "./config.ts";
+import { AUTONOMOUS_FRAMING_LINES, AUTONOMOUS_TAG, AUTONOMOUS_TAG_PREFIX } from "./config.ts";
 
 // ── Shared mutable state ────────────────────────────────────────────
 
@@ -243,8 +243,7 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
       : [];
     const framed = trimmed.startsWith(AUTONOMOUS_TAG_PREFIX)
       ? [
-          "Это не сообщение пользователя, а твоя собственная инициатива: ниже — то, что ты сам хочешь сказать.",
-          "Обратись к пользователю от себя, коротко и естественно. Не описывай внутренние механизмы.",
+          ...AUTONOMOUS_FRAMING_LINES,
           ...(rejectionHints.length > 0
             ? [`Не заводи темы, которые пользователю не зашли: ${rejectionHints.join("; ")}.`]
             : []),
