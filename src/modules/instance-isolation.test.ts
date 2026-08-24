@@ -22,6 +22,8 @@ import { createEmotionalMemory } from "./emotional-memory.ts";
 import { createSessionBridge } from "./session-bridge.ts";
 import { createDreamMode } from "./dream-mode.ts";
 import { createDMN } from "./dmn.ts";
+import { createCuriosityDrive } from "./curiosity-drive.ts";
+import { createDriveArbiter } from "./drive-arbiter.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -427,6 +429,59 @@ describe("per-instance состояние пакета G (v0.6.8)", () => {
 
     expect(a.getStats().backgroundThoughts).toBe(1);
     expect(b.getStats().backgroundThoughts).toBe(0);
+
+    a.stop();
+    b.stop();
+  });
+});
+
+describe("per-instance состояние пакета H (v0.6.9)", () => {
+  it("фабрика curiosity drive создаёт независимые списки пробелов знаний", () => {
+    const a = createCuriosityDrive(makeDir("brainagent-cd-a-"), DEFAULT_CONFIG);
+    const b = createCuriosityDrive(makeDir("brainagent-cd-b-"), DEFAULT_CONFIG);
+
+    a.detectKnowledgeGap("quantum gravity", "technical", true);
+
+    expect(a.getStats().totalDetected).toBe(1);
+    expect(a.getOpenGaps()).toHaveLength(1);
+    // Второй инстанс не видит пробелы первого
+    expect(b.getStats().totalDetected).toBe(0);
+    expect(b.getOpenGaps()).toHaveLength(0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика drive arbiter создаёт независимый выбор драйва", () => {
+    const a = createDriveArbiter(makeDir("brainagent-da-a-"), DEFAULT_CONFIG, {
+      getSocialDriveStats: () => ({ need: 0.9 }) as never,
+    });
+    const b = createDriveArbiter(makeDir("brainagent-da-b-"), DEFAULT_CONFIG, {});
+
+    // Событие на шине видят оба инстанса, но выбирает только тот,
+    // у кого геттеры отдают активный драйв
+    bus.emitSync("social-drive:need-rising", {
+      needLevel: "strong",
+      satiation: 0.2,
+      need: 0.9,
+    });
+
+    expect(a.getLastSelectedDrive()).toBe("social");
+    // Второй инстанс без геттеров ничего не выбрал
+    expect(b.getLastSelectedDrive()).toBeNull();
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика curiosity drive с пустым dir живёт в памяти и не трогает диск", () => {
+    const a = createCuriosityDrive("");
+    const b = createCuriosityDrive("");
+
+    a.detectKnowledgeGap("black holes", "technical", true);
+
+    expect(a.getStats().openGaps).toBe(1);
+    expect(b.getStats().openGaps).toBe(0);
 
     a.stop();
     b.stop();
