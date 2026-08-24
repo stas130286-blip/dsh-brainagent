@@ -34,6 +34,7 @@ import { createLLMClient } from "./llm-client.ts";
 import { createAIEmbeddings } from "./ai-embeddings.ts";
 import { createAutonomyEnricher, type AutonomyEnricherDeps } from "./autonomy-enricher.ts";
 import { createGoalStack } from "./goal-stack.ts";
+import { createAgentIdentity } from "./agent-identity.ts";
 import { bus } from "./event-bus.ts";
 import type { HostConfig } from "./host-config.ts";
 import {
@@ -754,5 +755,35 @@ describe("L: фабрика goal-stack изолирована", () => {
     // Триггеры тоже локальные: у b нет цели со словом "почта"
     expect(a.checkGoalTriggers("почта ждёт проверки")).toHaveLength(1);
     expect(b.checkGoalTriggers("почта ждёт проверки")).toHaveLength(0);
+  });
+});
+
+// ── M: agent-identity ─────────────────────────────────────────────
+
+describe("M: фабрика agent-identity изолирована", () => {
+  it("фабрика agent-identity ведёт независимые карты способностей", () => {
+    const a = createAgentIdentity(makeDir("brainagent-id-a-"), DEFAULT_CONFIG);
+    const b = createAgentIdentity(makeDir("brainagent-id-b-"), DEFAULT_CONFIG);
+
+    // 12 слабых исходов в technical — копится статистика и self-knowledge
+    for (let i = 0; i < 12; i++) {
+      a.recordDomainOutcome("technical", 0.3, "simple");
+    }
+
+    expect(a.getAgentIdentityStats().totalCycles).toBe(12);
+    expect(a.getCapabilities().technical?.avgReward).toBeGreaterThan(0);
+    expect(a.buildIdentityContext("technical")).toContain("Self-Knowledge");
+
+    // Второй инстанс чист — ни циклов, ни контекста
+    expect(b.getAgentIdentityStats().totalCycles).toBe(0);
+    expect(b.getCapabilities().technical).toBeUndefined();
+    expect(b.buildIdentityContext("technical")).toBeUndefined();
+
+    // Автобиографическая память тоже локальная
+    const mem = a.recordSignificantExperience("важный диалог", "joy", 0.9, 0.9, "technical");
+    expect(mem).toBeDefined();
+    expect(a.getAgentIdentityStats().autobiographicalCount).toBe(1);
+    expect(b.getAgentIdentityStats().autobiographicalCount).toBe(0);
+    expect(b.getLifeNarrative()).toContain("No significant experiences");
   });
 });
