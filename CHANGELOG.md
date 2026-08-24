@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.6 — 2026-08-24
+
+Волна 2 миграции на per-instance состояние (пакет E): strategy-bandit, learning-coordinator, neural-pathways — группа «ступени обучения». Внешний API не меняется.
+
+- `strategy-bandit`, `learning-coordinator`, `neural-pathways` переведены на фабрики (`createStrategyBandit`, `createLearningCoordinator`, `createNeuralPathways`): таблицы UCB1 + окно атрибуции наград, метрики модулей/доменов + инсайты, 8 межмодульных путей + синаптические веса — всё инкапсулировано в инстансах
+- До инициализации чтения возвращают безопасные значения по умолчанию (пустая статистика, дефолтный нейромодуляторный кеш, confidence 0.5 для assessCapability), мутации — no-op; ленивого создания detached-инстанса нет
+- Чистые функции без состояния (`computeCorrelation`, `identifyImplicatedModule`, `createDefaultSynapticState`, `computeSynapticStats`) остались свободными; добавлены симметричные `stopLearningCoordinator`/`stopNeuralPathways`
+- +3 теста (instance-isolation.test.ts расширен до 15): изоляция таблиц стратегий, доменной метрики и цикловых состояний между независимыми инстансами
+- 725 тестов / 42 файла; tsc чисто, smoke OK
+
 ## 0.6.5 — 2026-08-24
 
 Волна 2 миграции на per-instance состояние (пакет D): circadian-rhythm, metabolic-budget, dopamine-system — группа «ритмы и нейрохимия». Внешний API не меняется.

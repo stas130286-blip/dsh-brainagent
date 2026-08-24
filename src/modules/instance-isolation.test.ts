@@ -14,6 +14,9 @@ import { createTemporalAwareness } from "./temporal-awareness.ts";
 import { createCircadianRhythm } from "./circadian-rhythm.ts";
 import { createMetabolicBudget } from "./metabolic-budget.ts";
 import { createDopamineSystem } from "./dopamine-system.ts";
+import { createStrategyBandit } from "./strategy-bandit.ts";
+import { createLearningCoordinator } from "./learning-coordinator.ts";
+import { createNeuralPathways } from "./neural-pathways.ts";
 import { bus } from "./event-bus.ts";
 import { DEFAULT_CONFIG, type DopamineSignal, type WorkingMemoryEntry } from "./types.ts";
 
@@ -261,6 +264,62 @@ describe("per-instance состояние пакета D (v0.6.5)", () => {
     // Второй инстанс остаётся в фазе бодрствования
     expect(b.getState().phase).toBe("wake");
     expect(b.isInWakePhase()).toBe(true);
+
+    a.stop();
+    b.stop();
+  });
+});
+
+describe("per-instance состояние пакета E (v0.6.6)", () => {
+  it("фабрика strategy bandit создаёт независимые таблицы стратегий", () => {
+    const a = createStrategyBandit(makeDir("brainagent-sb-a-"), DEFAULT_CONFIG);
+    const b = createStrategyBandit(makeDir("brainagent-sb-b-"), DEFAULT_CONFIG);
+
+    a.recordOutcome("dp", "arm", 1);
+
+    expect(a.getBanditStats().totalPlays).toBe(1);
+    expect(a.getArmStats("dp").arm.meanReward).toBe(1);
+    // Второй инстанс не видит исходы первого
+    expect(b.getBanditStats().totalPlays).toBe(0);
+    expect(b.getArmStats("dp")).toEqual({});
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика learning coordinator создаёт независимую метрику доменов", () => {
+    const a = createLearningCoordinator(makeDir("brainagent-lc-a-"), DEFAULT_CONFIG);
+    const b = createLearningCoordinator(makeDir("brainagent-lc-b-"), DEFAULT_CONFIG);
+
+    a.recordDomainPerformance("technical", 0.8);
+
+    expect(a.getDomainPerformance("technical")?.cycleCount).toBe(1);
+    // Второй инстанс не видит производительность доменов первого
+    expect(b.getDomainPerformance("technical")).toBeUndefined();
+    expect(b.getStats().moduleCount).toBe(0);
+
+    a.stop();
+    b.stop();
+  });
+
+  it("фабрика neural pathways создаёт независимые цикловые состояния", () => {
+    const a = createNeuralPathways(makeDir("brainagent-np-a-"), DEFAULT_CONFIG);
+    const b = createNeuralPathways(makeDir("brainagent-np-b-"), DEFAULT_CONFIG);
+
+    // Событие на шине видят оба инстанса — каждый запоминает свой habitId
+    bus.emitSync("basal:habit-matched", {
+      habitId: "iso-habit",
+      matchScore: 0.8,
+      autoExecute: false,
+    });
+
+    expect(a.getPathwayStats().currentHabitId).toBe("iso-habit");
+    expect(b.getPathwayStats().currentHabitId).toBe("iso-habit");
+
+    // Сброс цикла одного инстанса не трогает другой
+    a.resetCycleState();
+    expect(a.getPathwayStats().currentHabitId).toBeUndefined();
+    expect(b.getPathwayStats().currentHabitId).toBe("iso-habit");
 
     a.stop();
     b.stop();

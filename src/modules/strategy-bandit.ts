@@ -30,38 +30,75 @@ type ArmRecord = {
 
 type DecisionPointState = Record<string, ArmRecord>;
 
-// ── Состояние модуля ──────────────────────────────────────────────
+export type StrategyBanditInstance = {
+  chooseArm(decisionPoint: string, arms: readonly string[]): string;
+  recordOutcome(decisionPoint: string, arm: string, reward: number): void;
+  getArmStats(decisionPoint: string): Record<string, { plays: number; meanReward: number }>;
+  getBanditStats(): { decisionPoints: number; totalPlays: number; initialized: boolean };
+  /** Отписка от шины + сброс накопленной персистентности на диск. */
+  stop(): void;
+  /** Тихая версия stop для пере-инициализации. */
+  dispose(): void;
+};
 
-let storageFile = "";
-let state: Record<string, DecisionPointState> = {};
-let explorationConstant = 1.4;
-let attributionWindowMs = 5 * 60 * 1000;
-let unsubscribers: Array<() => void> = [];
-let initialized = false;
-let lastChoices: Record<string, { arm: string; timestamp: number }> = {};
+// ── Фабрика ───────────────────────────────────────────────────────
 
-// ── Инициализация ─────────────────────────────────────────────────
-
-export function initStrategyBandit(workspaceDir: string, config: BrainAgentConfig): void {
-  stopStrategyBandit();
-
+/** Создать бандита с собственным состоянием и подпиской на шину. */
+export function createStrategyBandit(
+  workspaceDir: string,
+  config: BrainAgentConfig,
+): StrategyBanditInstance {
   const storageDir = join(workspaceDir, ".brainagent", "bandit");
   if (!existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
-  storageFile = join(storageDir, "state.json");
-  cancelPersist(storageFile);
-  explorationConstant = config.learningLoop.strategyBandit.explorationConstant;
-  attributionWindowMs = config.learningLoop.strategyBandit.attributionWindowMs;
+  const storageFile = join(storageDir, "state.json");
+  const explorationConstant = config.learningLoop.strategyBandit.explorationConstant;
+  const attributionWindowMs = config.learningLoop.strategyBandit.attributionWindowMs;
 
-  state = {};
-  lastChoices = {};
+  let state: Record<string, DecisionPointState> = {};
+  let lastChoices: Record<string, { arm: string; timestamp: number }> = {};
+
+  function loadState(): void {
+    if (!existsSync(storageFile)) return;
+    try {
+      const data = JSON.parse(readFileSync(storageFile, "utf-8")) as Record<
+        string,
+        DecisionPointState
+      >;
+      state = data && typeof data === "object" ? data : {};
+    } catch {
+      /* fresh start */
+    }
+  }
+
+  function persistState(): void {
+    schedulePersist(storageFile, () => JSON.stringify(state, null, 2));
+  }
+
+  function recordOutcome(decisionPoint: string, arm: string, reward: number): void {
+    const point = state[decisionPoint] ?? (state[decisionPoint] = {});
+    const rec = getOrCreateArm(point, arm);
+    rec.plays += 1;
+    rec.rewardSum += Math.max(-1, Math.min(1, reward));
+    persistState();
+  }
+
+  function teardown(): void {
+    for (const unsub of unsubscribers) {
+      unsub();
+    }
+    unsubscribers.length = 0;
+    flushPersist(storageFile);
+  }
+
+  cancelPersist(storageFile);
   loadState();
 
   // Награда из reward-ledger приписывается самому позднему выбору в окне
   // атрибуции; слот выбора — свой для каждой точки решения, поэтому
   // несколько точек решения не крадут награды друг у друга
-  unsubscribers.push(
+  const unsubscribers: Array<() => void> = [
     bus.on("reward:recorded", (data) => {
       const now = Date.now();
       let bestPoint: string | null = null;
@@ -79,25 +116,97 @@ export function initStrategyBandit(workspaceDir: string, config: BrainAgentConfi
       delete lastChoices[bestPoint]; // одна награда на один выбор
       recordOutcome(bestPoint, arm, data.reward);
     }),
-  );
+  ];
 
-  initialized = true;
+  /**
+   * Выбрать руку для точки решения. Неинициализированный бандит
+   * безопасно возвращает "standard", если он в списке, иначе первую руку.
+   */
+  function chooseArm(decisionPoint: string, arms: readonly string[]): string {
+    const point = state[decisionPoint] ?? (state[decisionPoint] = {});
+
+    // Разведка: ни разу не выбранные руки пробуем первыми
+    // (выбранная, но ещё без исхода рука уже не считается «неигранной»)
+    const unplayed = arms.find(
+      (arm) => !point[arm] || (point[arm].plays === 0 && point[arm].lastChosen === 0),
+    );
+
+    let chosen: string;
+    if (unplayed) {
+      chosen = unplayed;
+    } else {
+      const totalPlays = arms.reduce((sum, arm) => sum + point[arm].plays, 0);
+      if (totalPlays === 0) {
+        // Руки уже выбирались, но исходы ещё не пришли — берём давно не выбранную
+        chosen = arms.reduce(
+          (oldest, arm) => (point[arm].lastChosen < point[oldest].lastChosen ? arm : oldest),
+          arms[0],
+        );
+      } else {
+        let bestScore = Number.NEGATIVE_INFINITY;
+        chosen = arms[0];
+        for (const arm of arms) {
+          const rec = point[arm];
+          const mean = rec.rewardSum / rec.plays;
+          const bonus = explorationConstant * Math.sqrt(Math.log(totalPlays) / rec.plays);
+          const score = mean + bonus;
+          if (score > bestScore) {
+            bestScore = score;
+            chosen = arm;
+          }
+        }
+      }
+    }
+
+    const rec = getOrCreateArm(point, chosen);
+    rec.lastChosen = Date.now();
+    lastChoices[decisionPoint] = { arm: chosen, timestamp: Date.now() };
+
+    persistState();
+    bus.emitSync("bandit:arm-chosen", { decisionPoint, arm: chosen });
+
+    return chosen;
+  }
+
+  function getArmStats(
+    decisionPoint: string,
+  ): Record<string, { plays: number; meanReward: number }> {
+    const point = state[decisionPoint] ?? {};
+    const out: Record<string, { plays: number; meanReward: number }> = {};
+    for (const [arm, rec] of Object.entries(point)) {
+      out[arm] = {
+        plays: rec.plays,
+        meanReward: rec.plays > 0 ? rec.rewardSum / rec.plays : 0,
+      };
+    }
+    return out;
+  }
+
+  function getBanditStats(): {
+    decisionPoints: number;
+    totalPlays: number;
+    initialized: boolean;
+  } {
+    let totalPlays = 0;
+    for (const point of Object.values(state)) {
+      for (const rec of Object.values(point)) {
+        totalPlays += rec.plays;
+      }
+    }
+    return { decisionPoints: Object.keys(state).length, totalPlays, initialized: true };
+  }
+
+  return {
+    chooseArm,
+    recordOutcome,
+    getArmStats,
+    getBanditStats,
+    stop: teardown,
+    dispose: teardown,
+  };
 }
 
-export function stopStrategyBandit(): void {
-  for (const unsub of unsubscribers) {
-    unsub();
-  }
-  unsubscribers = [];
-  if (storageFile) {
-    flushPersist(storageFile);
-  }
-  storageFile = "";
-  initialized = false;
-  lastChoices = {};
-}
-
-// ── Ядро: UCB1 ────────────────────────────────────────────────────
+// ── Ядро: UCB1 (общий помощник) ───────────────────────────────────
 
 function getOrCreateArm(point: DecisionPointState, arm: string): ArmRecord {
   if (!point[arm]) {
@@ -106,84 +215,38 @@ function getOrCreateArm(point: DecisionPointState, arm: string): ArmRecord {
   return point[arm];
 }
 
-/**
- * Выбрать руку для точки решения. Неинициализированный бандит
- * безопасно возвращает "standard", если он в списке, иначе первую руку.
- */
+// ── Совместимость: свободные функции поверх активного инстанса ─────
+
+let active: StrategyBanditInstance | undefined;
+
+export function initStrategyBandit(workspaceDir: string, config: BrainAgentConfig): void {
+  active?.dispose();
+  active = createStrategyBandit(workspaceDir, config);
+}
+
+export function stopStrategyBandit(): void {
+  active?.stop();
+  active = undefined;
+}
+
 export function chooseArm(decisionPoint: string, arms: readonly string[]): string {
   if (arms.length === 0) return "standard";
-  if (!initialized) {
+  if (!active) {
     return arms.includes("standard") ? "standard" : arms[0];
   }
-
-  const point = state[decisionPoint] ?? (state[decisionPoint] = {});
-
-  // Разведка: ни разу не выбранные руки пробуем первыми
-  // (выбранная, но ещё без исхода рука уже не считается «неигранной»)
-  const unplayed = arms.find(
-    (arm) => !point[arm] || (point[arm].plays === 0 && point[arm].lastChosen === 0),
-  );
-
-  let chosen: string;
-  if (unplayed) {
-    chosen = unplayed;
-  } else {
-    const totalPlays = arms.reduce((sum, arm) => sum + point[arm].plays, 0);
-    if (totalPlays === 0) {
-      // Руки уже выбирались, но исходы ещё не пришли — берём давно не выбранную
-      chosen = arms.reduce(
-        (oldest, arm) => (point[arm].lastChosen < point[oldest].lastChosen ? arm : oldest),
-        arms[0],
-      );
-    } else {
-      let bestScore = Number.NEGATIVE_INFINITY;
-      chosen = arms[0];
-      for (const arm of arms) {
-        const rec = point[arm];
-        const mean = rec.rewardSum / rec.plays;
-        const bonus = explorationConstant * Math.sqrt(Math.log(totalPlays) / rec.plays);
-        const score = mean + bonus;
-        if (score > bestScore) {
-          bestScore = score;
-          chosen = arm;
-        }
-      }
-    }
-  }
-
-  const rec = getOrCreateArm(point, chosen);
-  rec.lastChosen = Date.now();
-  lastChoices[decisionPoint] = { arm: chosen, timestamp: Date.now() };
-
-  persistState();
-  bus.emitSync("bandit:arm-chosen", { decisionPoint, arm: chosen });
-
-  return chosen;
+  return active.chooseArm(decisionPoint, arms);
 }
 
 /** Явная запись исхода (награда клампится к [-1, 1]). */
 export function recordOutcome(decisionPoint: string, arm: string, reward: number): void {
-  if (!initialized) return;
-  const point = state[decisionPoint] ?? (state[decisionPoint] = {});
-  const rec = getOrCreateArm(point, arm);
-  rec.plays += 1;
-  rec.rewardSum += Math.max(-1, Math.min(1, reward));
-  persistState();
+  active?.recordOutcome(decisionPoint, arm, reward);
 }
 
 /** Статистика рук точки решения. */
 export function getArmStats(
   decisionPoint: string,
 ): Record<string, { plays: number; meanReward: number }> {
-  const point = state[decisionPoint] ?? {};
-  const out: Record<string, { plays: number; meanReward: number }> = {};
-  for (const [arm, rec] of Object.entries(point)) {
-    out[arm] = {
-      plays: rec.plays,
-      meanReward: rec.plays > 0 ? rec.rewardSum / rec.plays : 0,
-    };
-  }
-  return out;
+  return active?.getArmStats(decisionPoint) ?? {};
 }
 
 /** Сводная статистика бандита. */
@@ -192,31 +255,5 @@ export function getBanditStats(): {
   totalPlays: number;
   initialized: boolean;
 } {
-  let totalPlays = 0;
-  for (const point of Object.values(state)) {
-    for (const rec of Object.values(point)) {
-      totalPlays += rec.plays;
-    }
-  }
-  return { decisionPoints: Object.keys(state).length, totalPlays, initialized };
-}
-
-// ── Персистентность ───────────────────────────────────────────────
-
-function loadState(): void {
-  if (!storageFile || !existsSync(storageFile)) return;
-  try {
-    const data = JSON.parse(readFileSync(storageFile, "utf-8")) as Record<
-      string,
-      DecisionPointState
-    >;
-    state = data && typeof data === "object" ? data : {};
-  } catch {
-    /* fresh start */
-  }
-}
-
-function persistState(): void {
-  if (!storageFile) return;
-  schedulePersist(storageFile, () => JSON.stringify(state, null, 2));
+  return active?.getBanditStats() ?? { decisionPoints: 0, totalPlays: 0, initialized: false };
 }
