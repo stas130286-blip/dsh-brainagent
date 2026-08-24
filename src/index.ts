@@ -56,6 +56,7 @@ import { createCycleEngine } from "./plugin/cycles.ts";
 import { createAutonomousDeliverer, createAutonomousIntentResolver, createAutonomyState } from "./plugin/autonomy.ts";
 import type { DriveGetters } from "./plugin/autonomy.ts";
 import { createPreStepHandler } from "./plugin/context.ts";
+import { createBrainAgentService, provideBrainAgentService } from "./plugin/service.ts";
 
 // Memory layers
 import {
@@ -120,7 +121,7 @@ import { initThalamicGate, getThalamicGateStats } from "./modules/thalamic-gate.
 import { isInternalPluginMessage } from "./modules/message-guard.ts";
 import { attachLlmBridge } from "./adapter/llm-bridge.ts";
 import { callLLM } from "./modules/llm-client.ts";
-import { registerBrainAgentCommands, setCommandStatGetters } from "./modules/commands.ts";
+import { registerBrainAgentCommands, setCommandStatGetters, buildStatusReport } from "./modules/commands.ts";
 import { classify } from "./modules/thalamus.ts";
 import { decideProcessingPath } from "./modules/prefrontal-cortex.ts";
 
@@ -802,6 +803,32 @@ export function apply(ctx: Context, config: Config) {
   if (config.modules.aiEnrichment) {
     ctx.effect(() => attachLlmBridge(ctx, config.model));
   }
+
+  // ── Cordis service provider ─────────────────────────────────
+  // Публичный фасад плагина: другие плагины dsh могут объявить
+  // inject: ["brainagent"] и читать ctx.brainagent. Регистрация
+  // принадлежит fiber-у плагина и снимается вместе с ним.
+  provideBrainAgentService(
+    ctx,
+    createBrainAgentService({
+      status: () => buildStatusReport(brainConfig).text,
+      recall: (query, episodicLimit, semanticLimit) =>
+        recallAll(query, episodicLimit, semanticLimit),
+      storeFact: (content, category) => {
+        storeFact(content, category);
+      },
+      storeEpisode: (event, summary) => {
+        storeEpisode(event, summary);
+      },
+      getDesires: brainConfig.modules.goalStack ? getDesires : () => [],
+      addDesire: brainConfig.modules.goalStack
+        ? addDesire
+        : () => {
+            throw new Error("BrainAgent: goal-stack module is disabled");
+          },
+      moduleFlags: () => ({ ...brainConfig.modules }),
+    }),
+  );
 
   logger.info("BrainAgent: cognitive architecture initialized");
   logger.info(

@@ -38,6 +38,9 @@ import { createAgentIdentity } from "./agent-identity.ts";
 import { createMasteryDrive } from "./mastery-drive.ts";
 import { createVitalImpulse } from "./vital-impulse.ts";
 import { createCommandRegistry } from "./commands.ts";
+import { Context } from "@deepseek-ai/cordis";
+import { BRAINAGENT_VERSION, createBrainAgentService, provideBrainAgentService } from "../plugin/service.ts";
+import type { BrainAgentServiceDeps } from "../plugin/service.ts";
 import { bus } from "./event-bus.ts";
 import type { HostConfig } from "./host-config.ts";
 import {
@@ -894,5 +897,68 @@ describe("P: фабрика commands изолирована", () => {
     // buildStatus тоже использует локальные геттеры
     expect(a.buildStatus(DEFAULT_CONFIG).text).toContain("Buffer entries: 7");
     expect(b.buildStatus(DEFAULT_CONFIG).text).toContain("Buffer entries: 3");
+  });
+});
+
+// ── Блок Q: Cordis-сервис ctx.brainagent (провайдер + fiber-scope) ─────
+
+function makeServiceDepsQ(marker: string): BrainAgentServiceDeps {
+  return {
+    status: () => "status-" + marker,
+    recall: (query: string) => ({
+      episodic: [],
+      semantic: [{ content: marker + ":" + query }] as unknown as SemanticMemory[],
+      procedural: [],
+    }),
+    storeFact: () => {},
+    storeEpisode: () => {},
+    getDesires: () => [] as Desire[],
+    addDesire: (type: Desire["type"], description: string, strength: number, source: string) => ({
+      id: "d_" + marker,
+      type,
+      description,
+      strength,
+      source,
+      createdAt: Date.now(),
+    }),
+    moduleFlags: () => ({ dmn: marker === "A" }),
+  };
+}
+
+describe("пакет Q: Cordis-сервис ctx.brainagent (m5)", () => {
+  it("фабрика: два сервиса независимы и читают свои deps", () => {
+    const a = createBrainAgentService(makeServiceDepsQ("A"));
+    const b = createBrainAgentService(makeServiceDepsQ("B"));
+    expect(a.name).toBe("brainagent");
+    expect(a.version).toBe(BRAINAGENT_VERSION);
+    expect(a.status()).toBe("status-A");
+    expect(b.status()).toBe("status-B");
+    expect(a.recall("x").semantic[0].content).toBe("A:x");
+    expect(b.recall("y").semantic[0].content).toBe("B:y");
+    expect(a.modules().dmn).toBe(true);
+    expect(b.modules().dmn).toBe(false);
+    expect(a.addDesire("exploration", "проба", 0.5, "unit").id).toBe("d_A");
+  });
+
+  it("провайдер: сервис виден потребителю через inject и снимается с fiber (scope)", async () => {
+    const svc = createBrainAgentService(makeServiceDepsQ("Q"));
+    const root = new Context();
+    const fiber = await root.plugin({
+      name: "brainagent",
+      apply: (inner: Context) => {
+        provideBrainAgentService(inner, svc);
+      },
+    });
+    const seen: string[] = [];
+    await root.plugin({
+      inject: ["brainagent"],
+      apply: (inner: Context) => {
+        seen.push(inner.brainagent.status());
+      },
+    });
+    expect(seen).toEqual(["status-Q"]);
+    // Сервис снимается вместе с fiber-ом провайдера (scope-семантика Cordis).
+    await fiber.dispose();
+    expect(root.get("brainagent")).toBeUndefined();
   });
 });
