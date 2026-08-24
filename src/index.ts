@@ -119,6 +119,7 @@ import { initEmotionalMemory, tagEmotionalContext } from "./modules/emotional-me
 import { extractFacts, isFactWorthy } from "./modules/semantic-extractor.ts";
 import { extractFactsWithAI, isAIProviderAvailable } from "./modules/ai-extractor.ts";
 import { extractProcedureAsync, isProcedural } from "./modules/procedural-extractor.ts";
+import { isInternalPluginMessage } from "./modules/message-guard.ts";
 import { attachLlmBridge } from "./adapter/llm-bridge.ts";
 import { callLLM } from "./modules/llm-client.ts";
 import {
@@ -1882,6 +1883,12 @@ export function apply(ctx: Context, config: Config) {
     if (event.type === "user/message") {
       const text = textOfContent(event.data.content);
       if (!text.trim()) return;
+
+      // v0.2.1: наши собственные инъекции логируются как user/message
+      // («видно моделью = пиши в лог»). Не считаем их репликами
+      // пользователя — иначе привычки, любопытство и эпизоды
+      // начнут учиться на нашем же внутреннем контексте (самоотравление).
+      if (isInternalPluginMessage(text)) return;
 
       // Track live sessions for proactive delivery routing.
       lastActiveAgentId = key;

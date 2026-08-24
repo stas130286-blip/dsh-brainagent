@@ -200,7 +200,8 @@ function detectLanguage(text: string): string {
   const latinCount = (text.match(/[a-zA-Z]/g) ?? []).length;
   const totalAlpha = cyrillicCount + latinCount;
 
-  if (totalAlpha === 0) return "unknown";
+  // v0.2.1: выборка меньше 10 букв — слишком мало, чтобы судить о языке
+  if (totalAlpha < 10) return "unknown";
   if (cyrillicCount / totalAlpha > 0.5) return "ru";
   return "en";
 }

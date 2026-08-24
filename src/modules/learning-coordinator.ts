@@ -320,7 +320,8 @@ function generateInsights(config: BrainAgentConfig): void {
 
     // Detect high-error modules
     if (metrics.errorCount > 0 && metrics.activationCount > 10) {
-      const errorRate = metrics.errorCount / metrics.activationCount;
+      // v0.2.1: ошибка не может случаться чаще активаций — потолок 100%
+      const errorRate = Math.min(1, metrics.errorCount / metrics.activationCount);
       if (errorRate > 0.3) {
         newInsights.push({
           type: "anomaly",
@@ -418,7 +419,7 @@ function generateCycleReport(lastSignal: DopamineSignal): void {
     else if (trendDiff < -0.1) trend = "degrading";
 
     const errorRate =
-      metrics.activationCount > 0 ? metrics.errorCount / metrics.activationCount : 0;
+      metrics.activationCount > 0 ? Math.min(1, metrics.errorCount / metrics.activationCount) : 0;
 
     perModuleMetrics[modName] = {
       activations: metrics.activationCount,
@@ -542,7 +543,7 @@ export function getLearningStats(): {
     const recent = metrics.recentRewards.slice(-20);
     const avgReward = recent.length > 0 ? recent.reduce((s, v) => s + v, 0) / recent.length : 0;
     const errorRate =
-      metrics.activationCount > 0 ? metrics.errorCount / metrics.activationCount : 0;
+      metrics.activationCount > 0 ? Math.min(1, metrics.errorCount / metrics.activationCount) : 0;
 
     // Trend
     const firstHalf = recent.slice(0, Math.floor(recent.length / 2));

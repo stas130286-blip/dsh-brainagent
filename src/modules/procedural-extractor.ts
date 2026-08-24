@@ -164,6 +164,24 @@ const PROCEDURE_PATTERNS: ProcedurePattern[] = [
 // ── Main extraction function ────────────────────────────────────────
 
 /**
+ * v0.2.1: брак-контроль триггеров.
+ * Отклоняет обрезанные фрагменты (например, куски вызовов инструментов
+ * вида "any files ("), которые раньше сохранялись как «выученные
+ * сценарии» и потом предлагались агенту.
+ */
+function isQualityTrigger(trigger: string): boolean {
+  const t = trigger.trim();
+  if (t.length < 5) return false;
+  // Висящая открывающая скобка или пунктуация — признак обрезка
+  if (/[[({,;:\-\s]$/.test(t)) return false;
+  // Незакрытые скобки — фрагмент вырван из середины
+  const opens = (t.match(/[([{]/g) ?? []).length;
+  const closes = (t.match(/[)\]}]/g) ?? []).length;
+  if (opens > closes) return false;
+  return true;
+}
+
+/**
  * Extract procedural patterns from user input.
  * Returns patterns that could become procedural memories.
  */
@@ -185,7 +203,7 @@ export function extractProcedure(
 
     const extracted = procPattern.extract(match, text);
     if (!extracted) continue;
-    if (!extracted.triggerPattern || extracted.triggerPattern.length < 5) continue;
+    if (!extracted.triggerPattern || !isQualityTrigger(extracted.triggerPattern)) continue;
 
     // Calculate confidence
     let confidence = 0.4 + domainBoost;
@@ -299,7 +317,7 @@ function parseProcedureResponse(
         ? (parsed.domain as MessageDomain)
         : (classification?.domain ?? "unknown");
 
-    if (!trigger || trigger.length < 3) return null;
+    if (!trigger || !isQualityTrigger(trigger)) return null;
 
     return {
       triggerPattern: trigger,

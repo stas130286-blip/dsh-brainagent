@@ -194,9 +194,15 @@ function checkLanguageConsistency(
   const latinCount = (response.match(/[a-zA-Z]/g) ?? []).length;
   const totalAlpha = cyrillicCount + latinCount;
 
-  if (totalAlpha === 0) return;
+  // v0.2.1: на коротких ответах язык не определяем — код, ссылки
+  // и технические термины сильно искажают буквенную статистику
+  if (totalAlpha < 40) return;
 
-  const responseLang = cyrillicCount / totalAlpha > 0.5 ? "ru" : "en";
+  const ratio = cyrillicCount / totalAlpha;
+  // Смешанный двуязычный текст — не mismatch
+  if (ratio > 0.35 && ratio < 0.65) return;
+
+  const responseLang = ratio > 0.5 ? "ru" : "en";
 
   if (userModel.language !== "unknown" && responseLang !== userModel.language) {
     issues.push(
