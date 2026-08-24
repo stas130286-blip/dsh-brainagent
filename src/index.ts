@@ -56,7 +56,9 @@ import { createCycleEngine } from "./plugin/cycles.ts";
 import { createAutonomousDeliverer, createAutonomousIntentResolver, createAutonomyState } from "./plugin/autonomy.ts";
 import type { DriveGetters } from "./plugin/autonomy.ts";
 import { createPreStepHandler } from "./plugin/context.ts";
-import { createBrainAgentService, provideBrainAgentService } from "./plugin/service.ts";
+import { BRAINAGENT_VERSION, createBrainAgentService, provideBrainAgentService } from "./plugin/service.ts";
+import { createMetricsCollector } from "./modules/metrics.ts";
+import { getInjectionMetrics } from "./modules/injection-metrics.ts";
 
 // Memory layers
 import {
@@ -810,8 +812,13 @@ export function apply(ctx: Context, config: Config) {
     // Periodic garbage collection of the event bus.
     const gcInterval = setInterval(() => bus.gc(120_000), 120_000);
 
+    // Единый metrics-файл: обновляем раз в минуту (m7).
+    const metricsInterval = setInterval(() => metrics.update(), 60_000);
+
     return () => {
       clearInterval(gcInterval);
+      clearInterval(metricsInterval);
+      metrics.stop();
       for (const unsub of unsubs) unsub();
       if (brainConfig.modules.dreamMode) stopDreamMode();
       if (brainConfig.circadian.enabled) stopCircadianRhythm();
@@ -837,6 +844,52 @@ export function apply(ctx: Context, config: Config) {
   if (config.modules.aiEnrichment) {
     ctx.effect(() => attachLlmBridge(ctx, config.model));
   }
+
+  // ── Единый metrics-файл наблюдаемости (m7) ─────────────────
+  // Агрегирует статистику модулей в .brainagent/metrics.json;
+  // провайдеры ленивые и защищены try/catch внутри коллектора.
+  const metrics = createMetricsCollector(dataDir);
+  metrics.register("version", () => BRAINAGENT_VERSION);
+  metrics.register("modules", () => ({ ...brainConfig.modules }));
+  metrics.register("injection", () => getInjectionMetrics());
+  if (brainConfig.modules.workingMemory) {
+    metrics.register("workingMemory", () => getWorkingMemoryStats());
+  }
+  if (brainConfig.modules.attentionGate) {
+    metrics.register("attention", () => getAttentionStats());
+  }
+  if (brainConfig.modules.neuromodulatorSystem) {
+    metrics.register("neuromodulators", () => getNeuromodulatorState());
+  }
+  if (brainConfig.modules.vitalImpulse) {
+    metrics.register("vitalImpulse", () => getVitalImpulseStats());
+  }
+  if (brainConfig.modules.dmn) {
+    metrics.register("dmn", () => getDMNStats());
+  }
+  if (brainConfig.modules.goalStack) {
+    metrics.register("goalStack", () => getGoalStackStats());
+  }
+  metrics.register("goalExecutor", () => getGoalExecutorStats());
+  if (brainConfig.modules.curiosityDrive) {
+    metrics.register("curiosity", () => getCuriosityStats());
+  }
+  if (brainConfig.modules.socialDrive) {
+    metrics.register("socialDrive", () => getSocialDriveStats());
+  }
+  if (brainConfig.modules.cognitiveHunger) {
+    metrics.register("cognitiveHunger", () => getCognitiveHungerStats());
+  }
+  if (brainConfig.modules.creativeDrive) {
+    metrics.register("creativeDrive", () => getCreativeDriveStats());
+  }
+  if (brainConfig.modules.masteryDrive) {
+    metrics.register("masteryDrive", () => getMasteryDriveStats());
+  }
+  if (brainConfig.modules.sessionBridge) {
+    metrics.register("sessionBridge", () => getSessionBridgeStats());
+  }
+  metrics.update();
 
   // ── Cordis service provider ─────────────────────────────────
   // Публичный фасад плагина: другие плагины dsh могут объявить
