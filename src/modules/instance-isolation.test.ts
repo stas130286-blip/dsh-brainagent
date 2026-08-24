@@ -5,6 +5,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createWorkingMemory } from "./working-memory.ts";
 import { createAttentionGate } from "./attention-gate.ts";
 import { createTemporalBinding } from "./temporal-binding.ts";
+import { createPredictiveEngine } from "./predictive-engine.ts";
+import { createBasalGanglia } from "./basal-ganglia.ts";
+import { createMirrorNeurons } from "./mirror-neurons.ts";
 import { DEFAULT_CONFIG, type WorkingMemoryEntry } from "./types.ts";
 
 let dirs: string[] = [];
@@ -89,5 +92,47 @@ describe("per-instance состояние пакета B (v0.6.2)", () => {
     // Второй инстанс не видит моменты первого
     expect(b.getStats().momentCount).toBe(0);
     expect(b.buildContext()).toBeUndefined();
+  });
+});
+
+describe("per-instance состояние пакета B2 (v0.6.3)", () => {
+  it("фабрика predictive engine создаёт независимые паттерны", () => {
+    const a = createPredictiveEngine(makeDir("brainagent-pe-a-"));
+    const b = createPredictiveEngine(makeDir("brainagent-pe-b-"));
+
+    a.observeInteraction("technical", ["code"]);
+    a.observeInteraction("creative", ["design"]);
+
+    expect(a.getStats().totalObservations).toBe(2);
+    // Второй инстанс не видит наблюдения первого
+    expect(b.getStats().totalObservations).toBe(0);
+    expect(b.getStats().temporalPatterns).toBe(0);
+  });
+
+  it("фабрика basal ganglia создаёт независимые хранилища привычек", () => {
+    const a = createBasalGanglia(makeDir("brainagent-bg-a-"));
+    const b = createBasalGanglia(makeDir("brainagent-bg-b-"));
+
+    a.recordPattern("deploy production app", ["build", "deploy"], "technical");
+
+    expect(a.getStats().totalHabits).toBe(1);
+    expect(a.findHabit("deploy app", "technical")).toBeDefined();
+    // Второй инстанс не видит привычки первого
+    expect(b.getStats().totalHabits).toBe(0);
+    expect(b.findHabit("deploy app", "technical")).toBeUndefined();
+  });
+
+  it("фабрика mirror neurons создаёт независимые модели пользователей", () => {
+    const a = createMirrorNeurons(makeDir("brainagent-mn-a-"));
+    const b = createMirrorNeurons(makeDir("brainagent-mn-b-"));
+
+    a.getOrCreateModel("user1");
+
+    expect(a.getUserModel("user1")).toBeDefined();
+    // Второй инстанс не видит модель первого
+    expect(b.getUserModel("user1")).toBeUndefined();
+    // Но лениво создаёт свою при getOrCreateModel
+    expect(b.getOrCreateModel("user1").userId).toBe("user1");
+    expect(a.getUserModel("user2")).toBeUndefined();
   });
 });

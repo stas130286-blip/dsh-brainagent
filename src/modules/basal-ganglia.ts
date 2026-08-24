@@ -20,6 +20,15 @@
  *
  * This is the brain's energy-saving mechanism. You don't solve
  * differential equations to tie your shoes — the basal ganglia do it.
+ *
+ * v0.6.3 (волна 1 миграции на per-instance состояние, пакет B2):
+ *  - фабрика `createBasalGanglia()` создаёт инстанс со своими привычками,
+ *    векторным индексом и персистентностью;
+ *  - module-level `let` остался один — слот активного инстанса;
+ *    обёртки до инициализации лениво используют detached-инстанс
+ *    (без персистентности), как раньше работали на состоянии по умолчанию;
+ *  - чистые функции без состояния (detectReinforcement, buildHabitContext,
+ *    detectReinforcementWithAI) остались свободными.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -65,11 +74,21 @@ export type HabitMatch = {
 
 export type ReinforcementSignal = "positive" | "negative" | "neutral";
 
-// ── Storage ─────────────────────────────────────────────────────────
+export type BasalStats = {
+  totalHabits: number;
+  automatedHabits: number;
+  averageReward: number;
+  totalActivations: number;
+};
 
-let storageDir = "";
-let habits: Habit[] = [];
-let habitIndex = new VectorIndex();
+export type BasalGangliaInstance = {
+  findHabit(input: string, domain: string): HabitMatch | undefined;
+  recordPattern(cue: string, routine: string[], domain: string, exampleResponse?: string): Habit;
+  reinforce(habitId: string, signal: ReinforcementSignal): void;
+  getStats(): BasalStats;
+};
+
+// ── Константы (без состояния) ───────────────────────────────────────
 
 /** Minimum activations before a habit can auto-execute */
 const MIN_ACTIVATIONS_FOR_AUTO = 3;
@@ -78,205 +97,232 @@ const MIN_REWARD_FOR_AUTO = 0.6;
 /** Maximum habits to store */
 const MAX_HABITS = 200;
 
-let idCounter = 0;
-function nextHabitId(): string {
-  return `hab-${Date.now()}-${++idCounter}`;
-}
+// ── Фабрика ─────────────────────────────────────────────────────────
 
-export function initBasalStorage(workspaceDir: string): void {
-  storageDir = join(workspaceDir, ".brainagent", "habits");
-  if (!existsSync(storageDir)) {
+export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
+  const storageDir = workspaceDir ? join(workspaceDir, ".brainagent", "habits") : "";
+
+  let habits: Habit[] = [];
+  let habitIndex = new VectorIndex();
+  let idCounter = 0;
+
+  function nextHabitId(): string {
+    return `hab-${Date.now()}-${++idCounter}`;
+  }
+
+  if (storageDir && !existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
-  // Clear in-memory state before loading from disk
-  habits = [];
-  habitIndex = new VectorIndex();
+
+  function loadHabits(): void {
+    if (!storageDir) return;
+    try {
+      const path = join(storageDir, "habits.json");
+      if (existsSync(path)) {
+        habits = JSON.parse(readFileSync(path, "utf-8")) as Habit[];
+      }
+    } catch {
+      habits = [];
+    }
+  }
+
+  function persistHabits(): void {
+    if (!storageDir) return;
+    try {
+      writeFileSync(join(storageDir, "habits.json"), JSON.stringify(habits, null, 2), "utf-8");
+    } catch {
+      /* non-critical */
+    }
+  }
+
+  function rebuildIndex(): void {
+    for (const habit of habits) {
+      habitIndex.add(habit.id, `${habit.cue} ${habit.domain} ${habit.routine.join(" ")}`);
+    }
+  }
+
   loadHabits();
   rebuildIndex();
-}
 
-function loadHabits(): void {
-  if (!storageDir) return;
-  try {
-    const path = join(storageDir, "habits.json");
-    if (existsSync(path)) {
-      habits = JSON.parse(readFileSync(path, "utf-8")) as Habit[];
-    }
-  } catch {
-    habits = [];
-  }
-}
+  // ── Habit matching ────────────────────────────────────────────────
 
-function persistHabits(): void {
-  if (!storageDir) return;
-  try {
-    writeFileSync(join(storageDir, "habits.json"), JSON.stringify(habits, null, 2), "utf-8");
-  } catch {
-    /* non-critical */
-  }
-}
+  function findHabit(input: string, domain: string): HabitMatch | undefined {
+    if (habits.length === 0) return undefined;
 
-function rebuildIndex(): void {
-  for (const habit of habits) {
-    habitIndex.add(habit.id, `${habit.cue} ${habit.domain} ${habit.routine.join(" ")}`);
-  }
-}
+    // Search vector index for similar habits
+    const results = habitIndex.search(`${input} ${domain}`, 5, 0.2);
+    if (results.length === 0) return undefined;
 
-// ── Habit matching ──────────────────────────────────────────────────
+    let bestMatch: HabitMatch | undefined;
+    let bestScore = 0;
 
-/**
- * Try to find a matching habit for the given input.
- * Returns the best match with auto-execute flag.
- *
- * Like the brain: if you've done this a thousand times,
- * the basal ganglia handles it. If it's novel, it
- * goes to the prefrontal cortex for conscious processing.
- */
-export function findHabit(input: string, domain: string): HabitMatch | undefined {
-  if (habits.length === 0) return undefined;
+    for (const result of results) {
+      const habit = habits.find((h) => h.id === result.id);
+      if (!habit) continue;
 
-  // Search vector index for similar habits
-  const results = habitIndex.search(`${input} ${domain}`, 5, 0.2);
-  if (results.length === 0) return undefined;
+      // Combine vector similarity with reward signal
+      const matchScore =
+        result.score * 0.5 + habit.rewardSignal * 0.3 + (habit.domain === domain ? 0.2 : 0);
 
-  let bestMatch: HabitMatch | undefined;
-  let bestScore = 0;
+      if (matchScore > bestScore) {
+        bestScore = matchScore;
 
-  for (const result of results) {
-    const habit = habits.find((h) => h.id === result.id);
-    if (!habit) continue;
+        // Auto-execute only if the habit is well-established
+        const autoExecute =
+          habit.activationCount >= MIN_ACTIVATIONS_FOR_AUTO &&
+          habit.rewardSignal >= MIN_REWARD_FOR_AUTO &&
+          result.score > 0.5; // High confidence match
 
-    // Combine vector similarity with reward signal
-    const matchScore =
-      result.score * 0.5 + habit.rewardSignal * 0.3 + (habit.domain === domain ? 0.2 : 0);
-
-    if (matchScore > bestScore) {
-      bestScore = matchScore;
-
-      // Auto-execute only if the habit is well-established
-      const autoExecute =
-        habit.activationCount >= MIN_ACTIVATIONS_FOR_AUTO &&
-        habit.rewardSignal >= MIN_REWARD_FOR_AUTO &&
-        result.score > 0.5; // High confidence match
-
-      bestMatch = { habit, matchScore, autoExecute };
-    }
-  }
-
-  return bestMatch;
-}
-
-// ── Habit formation ─────────────────────────────────────────────────
-
-/**
- * Record a new interaction pattern.
- * If similar enough to an existing habit, strengthens it.
- * If novel, creates a new habit.
- *
- * Like the brain: repetition carves neural pathways.
- * The more you do something, the more automatic it becomes.
- */
-export function recordPattern(
-  cue: string,
-  routine: string[],
-  domain: string,
-  exampleResponse?: string,
-): Habit {
-  // Check if this matches an existing habit
-  const existing = habitIndex.search(`${cue} ${domain}`, 1, 0.6);
-  if (existing.length > 0) {
-    const habit = habits.find((h) => h.id === existing[0].id);
-    if (habit) {
-      // Strengthen existing habit
-      habit.activationCount++;
-      habit.lastActivated = Date.now();
-
-      // Update routine if it evolved
-      if (routine.length > 0 && JSON.stringify(routine) !== JSON.stringify(habit.routine)) {
-        // Blend: keep the longer/more detailed routine
-        if (routine.length >= habit.routine.length) {
-          habit.routine = routine;
-        }
+        bestMatch = { habit, matchScore, autoExecute };
       }
-
-      // Store example response
-      if (exampleResponse) {
-        habit.exampleResponses.push(exampleResponse.slice(0, 500));
-        if (habit.exampleResponses.length > 3) {
-          habit.exampleResponses = habit.exampleResponses.slice(-3);
-        }
-      }
-
-      // Re-index
-      habitIndex.add(habit.id, `${habit.cue} ${habit.domain} ${habit.routine.join(" ")}`);
-      persistHabits();
-      return habit;
     }
+
+    return bestMatch;
   }
 
-  // Create new habit
-  const habit: Habit = {
-    id: nextHabitId(),
-    cue,
-    routine,
-    domain,
-    rewardSignal: 0.5, // Neutral start
-    activationCount: 1,
-    positiveReinforcements: 0,
-    negativeReinforcements: 0,
-    lastActivated: Date.now(),
-    createdAt: Date.now(),
-    exampleResponses: exampleResponse ? [exampleResponse.slice(0, 500)] : [],
-  };
+  // ── Habit formation ───────────────────────────────────────────────
 
-  habits.push(habit);
-  habitIndex.add(habit.id, `${cue} ${domain} ${routine.join(" ")}`);
+  function recordPattern(
+    cue: string,
+    routine: string[],
+    domain: string,
+    exampleResponse?: string,
+  ): Habit {
+    // Check if this matches an existing habit
+    const existing = habitIndex.search(`${cue} ${domain}`, 1, 0.6);
+    if (existing.length > 0) {
+      const habit = habits.find((h) => h.id === existing[0].id);
+      if (habit) {
+        // Strengthen existing habit
+        habit.activationCount++;
+        habit.lastActivated = Date.now();
 
-  // Prune if over limit
-  if (habits.length > MAX_HABITS) {
-    pruneWeakHabits();
+        // Update routine if it evolved
+        if (routine.length > 0 && JSON.stringify(routine) !== JSON.stringify(habit.routine)) {
+          // Blend: keep the longer/more detailed routine
+          if (routine.length >= habit.routine.length) {
+            habit.routine = routine;
+          }
+        }
+
+        // Store example response
+        if (exampleResponse) {
+          habit.exampleResponses.push(exampleResponse.slice(0, 500));
+          if (habit.exampleResponses.length > 3) {
+            habit.exampleResponses = habit.exampleResponses.slice(-3);
+          }
+        }
+
+        // Re-index
+        habitIndex.add(habit.id, `${habit.cue} ${habit.domain} ${habit.routine.join(" ")}`);
+        persistHabits();
+        return habit;
+      }
+    }
+
+    // Create new habit
+    const habit: Habit = {
+      id: nextHabitId(),
+      cue,
+      routine,
+      domain,
+      rewardSignal: 0.5, // Neutral start
+      activationCount: 1,
+      positiveReinforcements: 0,
+      negativeReinforcements: 0,
+      lastActivated: Date.now(),
+      createdAt: Date.now(),
+      exampleResponses: exampleResponse ? [exampleResponse.slice(0, 500)] : [],
+    };
+
+    habits.push(habit);
+    habitIndex.add(habit.id, `${cue} ${domain} ${routine.join(" ")}`);
+
+    // Prune if over limit
+    if (habits.length > MAX_HABITS) {
+      pruneWeakHabits();
+    }
+
+    persistHabits();
+    return habit;
   }
 
-  persistHabits();
-  return habit;
+  // ── Reinforcement learning ────────────────────────────────────────
+
+  function reinforce(habitId: string, signal: ReinforcementSignal): void {
+    const habit = habits.find((h) => h.id === habitId);
+    if (!habit) return;
+
+    const alpha = 0.2; // Learning rate
+
+    switch (signal) {
+      case "positive":
+        habit.positiveReinforcements++;
+        habit.rewardSignal = habit.rewardSignal * (1 - alpha) + 1.0 * alpha;
+        break;
+      case "negative":
+        habit.negativeReinforcements++;
+        habit.rewardSignal = habit.rewardSignal * (1 - alpha) + 0.0 * alpha;
+        break;
+      case "neutral":
+        // No change to reward, but count as activation
+        habit.rewardSignal = habit.rewardSignal * (1 - alpha * 0.5) + 0.5 * (alpha * 0.5);
+        break;
+    }
+
+    // Clamp to [0, 1]
+    habit.rewardSignal = Math.max(0, Math.min(1, habit.rewardSignal));
+
+    persistHabits();
+  }
+
+  // ── Habit pruning ─────────────────────────────────────────────────
+
+  function pruneWeakHabits(): void {
+    // Score each habit
+    const scored = habits.map((h) => ({
+      habit: h,
+      score:
+        h.rewardSignal * 0.4 +
+        Math.min(h.activationCount / 10, 1) * 0.4 +
+        (1 / (1 + (Date.now() - h.lastActivated) / (7 * 24 * 60 * 60 * 1000))) * 0.2,
+    }));
+
+    scored.sort((a, b) => b.score - a.score);
+
+    // Keep top MAX_HABITS, remove the rest
+    const toKeep = scored.slice(0, MAX_HABITS).map((s) => s.habit);
+    const toRemove = scored.slice(MAX_HABITS).map((s) => s.habit);
+
+    for (const h of toRemove) {
+      habitIndex.remove(h.id);
+    }
+
+    habits = toKeep;
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────
+
+  function getStats(): BasalStats {
+    const automated = habits.filter(
+      (h) => h.activationCount >= MIN_ACTIVATIONS_FOR_AUTO && h.rewardSignal >= MIN_REWARD_FOR_AUTO,
+    ).length;
+    const avgReward =
+      habits.length > 0 ? habits.reduce((sum, h) => sum + h.rewardSignal, 0) / habits.length : 0;
+    const totalAct = habits.reduce((sum, h) => sum + h.activationCount, 0);
+
+    return {
+      totalHabits: habits.length,
+      automatedHabits: automated,
+      averageReward: avgReward,
+      totalActivations: totalAct,
+    };
+  }
+
+  return { findHabit, recordPattern, reinforce, getStats };
 }
 
-// ── Reinforcement learning ──────────────────────────────────────────
-
-/**
- * Apply reinforcement signal to a habit.
- * Positive = user liked the result (said "спасибо", accepted without changes)
- * Negative = user corrected, re-asked, or expressed frustration
- *
- * Uses exponential moving average to update reward signal,
- * just like dopamine reinforcement in the brain's reward circuit.
- */
-export function reinforce(habitId: string, signal: ReinforcementSignal): void {
-  const habit = habits.find((h) => h.id === habitId);
-  if (!habit) return;
-
-  const alpha = 0.2; // Learning rate
-
-  switch (signal) {
-    case "positive":
-      habit.positiveReinforcements++;
-      habit.rewardSignal = habit.rewardSignal * (1 - alpha) + 1.0 * alpha;
-      break;
-    case "negative":
-      habit.negativeReinforcements++;
-      habit.rewardSignal = habit.rewardSignal * (1 - alpha) + 0.0 * alpha;
-      break;
-    case "neutral":
-      // No change to reward, but count as activation
-      habit.rewardSignal = habit.rewardSignal * (1 - alpha * 0.5) + 0.5 * (alpha * 0.5);
-      break;
-  }
-
-  // Clamp to [0, 1]
-  habit.rewardSignal = Math.max(0, Math.min(1, habit.rewardSignal));
-
-  persistHabits();
-}
+// ── Reinforcement detection (чистые функции, без состояния) ─────────
 
 /**
  * Detect reinforcement signal from user message.
@@ -342,36 +388,7 @@ export async function detectReinforcementWithAI(
   }
 }
 
-// ── Habit pruning ───────────────────────────────────────────────────
-
-/**
- * Remove weak habits: low reward + low activation + old.
- * Like the brain pruning unused synapses during sleep.
- */
-function pruneWeakHabits(): void {
-  // Score each habit
-  const scored = habits.map((h) => ({
-    habit: h,
-    score:
-      h.rewardSignal * 0.4 +
-      Math.min(h.activationCount / 10, 1) * 0.4 +
-      (1 / (1 + (Date.now() - h.lastActivated) / (7 * 24 * 60 * 60 * 1000))) * 0.2,
-  }));
-
-  scored.sort((a, b) => b.score - a.score);
-
-  // Keep top MAX_HABITS, remove the rest
-  const toKeep = scored.slice(0, MAX_HABITS).map((s) => s.habit);
-  const toRemove = scored.slice(MAX_HABITS).map((s) => s.habit);
-
-  for (const h of toRemove) {
-    habitIndex.remove(h.id);
-  }
-
-  habits = toKeep;
-}
-
-// ── Build context hint for the prompt ───────────────────────────────
+// ── Build context hint for the prompt (чистая функция) ──────────────
 
 /**
  * Build a context hint about matching habits for the prefrontal cortex.
@@ -405,25 +422,52 @@ export function buildHabitContext(match: HabitMatch): string {
   return lines.join("\n");
 }
 
-// ── Stats ───────────────────────────────────────────────────────────
+// ── Слот активного инстанса (обратная совместимость) ────────────────
 
-export function getBasalStats(): {
-  totalHabits: number;
-  automatedHabits: number;
-  averageReward: number;
-  totalActivations: number;
-} {
-  const automated = habits.filter(
-    (h) => h.activationCount >= MIN_ACTIVATIONS_FOR_AUTO && h.rewardSignal >= MIN_REWARD_FOR_AUTO,
-  ).length;
-  const avgReward =
-    habits.length > 0 ? habits.reduce((sum, h) => sum + h.rewardSignal, 0) / habits.length : 0;
-  const totalAct = habits.reduce((sum, h) => sum + h.activationCount, 0);
+let active: BasalGangliaInstance | undefined;
 
-  return {
-    totalHabits: habits.length,
-    automatedHabits: automated,
-    averageReward: avgReward,
-    totalActivations: totalAct,
-  };
+/** Инстанс без персистентности — для вызовов до инициализации. */
+function current(): BasalGangliaInstance {
+  return active ?? (active = createBasalGanglia(""));
+}
+
+// ── Initialization ──────────────────────────────────────────────────
+
+export function initBasalStorage(workspaceDir: string): void {
+  active = createBasalGanglia(workspaceDir);
+}
+
+// ── Core API (обёртки над активным инстансом) ───────────────────────
+
+/**
+ * Try to find a matching habit for the given input.
+ * Returns the best match with auto-execute flag.
+ */
+export function findHabit(input: string, domain: string): HabitMatch | undefined {
+  return current().findHabit(input, domain);
+}
+
+/**
+ * Record a new interaction pattern.
+ * If similar enough to an existing habit, strengthens it.
+ * If novel, creates a new habit.
+ */
+export function recordPattern(
+  cue: string,
+  routine: string[],
+  domain: string,
+  exampleResponse?: string,
+): Habit {
+  return current().recordPattern(cue, routine, domain, exampleResponse);
+}
+
+/**
+ * Apply reinforcement signal to a habit.
+ */
+export function reinforce(habitId: string, signal: ReinforcementSignal): void {
+  current().reinforce(habitId, signal);
+}
+
+export function getBasalStats(): BasalStats {
+  return current().getStats();
 }

@@ -6,6 +6,15 @@
  * of empathy. This module builds and maintains a model of each user:
  * their mood, stress level, communication style, expertise, and frequent
  * topics. The model evolves with every interaction.
+ *
+ * v0.6.3 (волна 1 миграции на per-instance состояние, пакет B2):
+ *  - фабрика `createMirrorNeurons()` создаёт инстанс со своей картой
+ *    пользовательских моделей и персистентностью;
+ *  - module-level `let` остался один — слот активного инстанса;
+ *    обёртки до инициализации лениво используют detached-инстанс
+ *    (без персистентности), как раньше работали на состоянии по умолчанию;
+ *  - чистые хелперы, принимающие модель аргументом (детекция стиля, ToM,
+ *    buildTheoryOfMindContext и др.), остались свободными функциями.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,25 +27,48 @@ import type {
   BrainAgentConfig,
   CommunicationStyle,
   EmotionLabel,
-  ThalamusClassification,
   UserModel,
 } from "./types.ts";
 
-// ── Storage ─────────────────────────────────────────────────────────
+// ── Тип инстанса ────────────────────────────────────────────────────
 
-let storageDir = "";
-const userModels = new Map<string, UserModel>();
+export type MirrorNeuronsInstance = {
+  getOrCreateModel(userId: string): UserModel;
+  getUserModel(userId: string): UserModel | undefined;
+  observe(
+    userId: string,
+    text: string,
+    amygdalaResult: AmygdalaAssessment,
+    config: BrainAgentConfig,
+  ): UserModel;
+  processStyleReward(userId: string, reward: number, activeStyle: CommunicationStyle): void;
+  getStyleRecommendation(
+    userId: string,
+  ): { style: CommunicationStyle; confidence: number; context: string } | undefined;
+  observeWithAI(
+    userId: string,
+    text: string,
+    amygdalaResult: AmygdalaAssessment,
+    config: BrainAgentConfig,
+    neuroConfig: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+  ): Promise<UserModel>;
+};
 
-export function initMirrorStorage(workspaceDir: string): void {
-  userModels.clear();
-  storageDir = join(workspaceDir, ".brainagent", "users");
-  if (!existsSync(storageDir)) {
+// ── Фабрика ─────────────────────────────────────────────────────────
+
+export function createMirrorNeurons(workspaceDir: string): MirrorNeuronsInstance {
+  const storageDir = workspaceDir ? join(workspaceDir, ".brainagent", "users") : "";
+  const userModels = new Map<string, UserModel>();
+
+  if (storageDir && !existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
+
   // Load all existing user models
   try {
     const indexPath = join(storageDir, "index.json");
-    if (existsSync(indexPath)) {
+    if (storageDir && existsSync(indexPath)) {
       const data = JSON.parse(readFileSync(indexPath, "utf-8")) as Record<string, UserModel>;
       for (const [id, model] of Object.entries(data)) {
         userModels.set(id, model);
@@ -45,19 +77,246 @@ export function initMirrorStorage(workspaceDir: string): void {
   } catch {
     // Fresh start
   }
-}
 
-function persistModels(): void {
-  if (!storageDir) return;
-  try {
-    const data = Object.fromEntries(userModels);
-    writeFileSync(join(storageDir, "index.json"), JSON.stringify(data, null, 2), "utf-8");
-  } catch {
-    // Non-critical
+  function persistModels(): void {
+    if (!storageDir) return;
+    try {
+      const data = Object.fromEntries(userModels);
+      writeFileSync(join(storageDir, "index.json"), JSON.stringify(data, null, 2), "utf-8");
+    } catch {
+      // Non-critical
+    }
   }
+
+  function getOrCreateModel(userId: string): UserModel {
+    let model = userModels.get(userId);
+    if (!model) {
+      model = createDefaultModel(userId);
+      userModels.set(userId, model);
+    }
+    return model;
+  }
+
+  function getUserModel(userId: string): UserModel | undefined {
+    return userModels.get(userId);
+  }
+
+  function observe(
+    userId: string,
+    text: string,
+    amygdalaResult: AmygdalaAssessment,
+    config: BrainAgentConfig,
+  ): UserModel {
+    const model = getOrCreateModel(userId);
+
+    // Update emotion history
+    model.emotionHistory.push({
+      timestamp: Date.now(),
+      emotion: amygdalaResult.emotion,
+      intensity: amygdalaResult.emotionIntensity,
+    });
+
+    // Trim history to configured length
+    if (model.emotionHistory.length > config.empathy.emotionHistoryLength) {
+      model.emotionHistory = model.emotionHistory.slice(-config.empathy.emotionHistoryLength);
+    }
+
+    // Compute mood trend from recent emotions
+    model.moodTrend = computeMoodTrend(model.emotionHistory);
+
+    // Update stress level (exponential moving average)
+    const stressEmotions: EmotionLabel[] = ["frustration", "anger", "anxiety", "urgency"];
+    const isStressed = stressEmotions.includes(amygdalaResult.emotion);
+    const alpha = 0.3;
+    model.stressLevel =
+      model.stressLevel * (1 - alpha) + (isStressed ? amygdalaResult.emotionIntensity : 0) * alpha;
+
+    // Detect communication style
+    model.communicationStyle = detectStyle(text);
+
+    // Detect language
+    model.language = detectLanguage(text);
+
+    // Update frequent topics (simple keyword extraction)
+    updateTopics(model, text);
+    model.lastSeen = Date.now();
+
+    // Theory of Mind updates
+    applyTheoryOfMindUpdates(model, text, amygdalaResult, config);
+
+    // Persist and broadcast
+    persistModels();
+    bus.emit("mirror:user-updated", model);
+
+    return model;
+  }
+
+  function processStyleReward(
+    userId: string,
+    reward: number,
+    activeStyle: CommunicationStyle,
+  ): void {
+    const model = getOrCreateModel(userId);
+
+    // Ensure styleRewards exists (for models loaded from old storage)
+    if (!model.styleRewards) {
+      model.styleRewards = {
+        formal: { total: 0, count: 0 },
+        informal: { total: 0, count: 0 },
+        terse: { total: 0, count: 0 },
+        verbose: { total: 0, count: 0 },
+      };
+    }
+
+    // Record reward for this style
+    const entry = model.styleRewards[activeStyle];
+    entry.total += reward;
+    entry.count++;
+
+    // Recompute preferred style from accumulated rewards
+    model.preferredResponseStyle = computePreferredStyle(model);
+
+    persistModels();
+  }
+
+  function getStyleRecommendation(
+    userId: string,
+  ): { style: CommunicationStyle; confidence: number; context: string } | undefined {
+    const model = userModels.get(userId);
+    if (!model?.styleRewards) return undefined;
+
+    const preferred = model.preferredResponseStyle ?? model.communicationStyle;
+    const entry = model.styleRewards[preferred];
+    if (!entry || entry.count < 3) return undefined;
+
+    // Confidence = how much better this style is vs average
+    const styles: CommunicationStyle[] = ["formal", "informal", "terse", "verbose"];
+    const allAvgs = styles
+      .map((s) => {
+        const e = model.styleRewards[s];
+        return e && e.count > 0 ? e.total / e.count : 0;
+      })
+      .filter((v) => v !== 0);
+
+    const globalAvg = allAvgs.length > 0 ? allAvgs.reduce((a, b) => a + b, 0) / allAvgs.length : 0;
+    const preferredAvg = entry.total / entry.count;
+    const advantage = preferredAvg - globalAvg;
+
+    // Only recommend if there's a meaningful advantage
+    if (advantage < 0.05 && entry.count < 10) return undefined;
+
+    const confidence = Math.min(0.95, 0.3 + advantage * 2 + Math.min(entry.count / 30, 0.3));
+
+    const styleDescriptions: Record<CommunicationStyle, string> = {
+      formal: "Use polite, structured language with clear sections and professional tone.",
+      informal: "Use conversational, friendly tone — relaxed but helpful.",
+      terse: "Be concise and direct — short answers, no fluff.",
+      verbose: "Provide detailed, thorough explanations with examples and context.",
+    };
+
+    return {
+      style: preferred,
+      confidence,
+      context: [
+        "## Communication Style Adaptation (Personality Evolution)",
+        `This user responds best to **${preferred}** communication.`,
+        styleDescriptions[preferred],
+        `(Based on ${entry.count} interactions, confidence: ${(confidence * 100).toFixed(0)}%)`,
+      ].join("\n"),
+    };
+  }
+
+  async function observeWithAI(
+    userId: string,
+    text: string,
+    amygdalaResult: AmygdalaAssessment,
+    config: BrainAgentConfig,
+    neuroConfig: NeuroClawConfig,
+    logger?: { info: (msg: string) => void },
+  ): Promise<UserModel> {
+    const model = getOrCreateModel(userId);
+
+    // Update emotion history (same as pattern-based)
+    model.emotionHistory.push({
+      timestamp: Date.now(),
+      emotion: amygdalaResult.emotion,
+      intensity: amygdalaResult.emotionIntensity,
+    });
+    if (model.emotionHistory.length > config.empathy.emotionHistoryLength) {
+      model.emotionHistory = model.emotionHistory.slice(-config.empathy.emotionHistoryLength);
+    }
+    model.moodTrend = computeMoodTrend(model.emotionHistory);
+
+    // Update stress level
+    const stressEmotions: EmotionLabel[] = ["frustration", "anger", "anxiety", "urgency"];
+    const isStressed = stressEmotions.includes(amygdalaResult.emotion);
+    const alpha = 0.3;
+    model.stressLevel =
+      model.stressLevel * (1 - alpha) + (isStressed ? amygdalaResult.emotionIntensity : 0) * alpha;
+
+    // Try LLM-enhanced style detection
+    const content = await callLLM(STYLE_PROMPT, text, neuroConfig, logger, 100);
+    if (content) {
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as {
+            style?: string;
+            expertise?: string;
+            language?: string;
+          };
+
+          const validStyles: CommunicationStyle[] = ["formal", "informal", "terse", "verbose"];
+          if (validStyles.includes(parsed.style as CommunicationStyle)) {
+            model.communicationStyle = parsed.style as CommunicationStyle;
+          } else {
+            model.communicationStyle = detectStyle(text);
+          }
+
+          const validExpertise = ["beginner", "intermediate", "expert"];
+          if (validExpertise.includes(parsed.expertise as string)) {
+            model.expertiseLevel = parsed.expertise as UserModel["expertiseLevel"];
+          }
+
+          if (parsed.language && typeof parsed.language === "string") {
+            model.language = parsed.language;
+          }
+        } else {
+          model.communicationStyle = detectStyle(text);
+          model.language = detectLanguage(text);
+        }
+      } catch {
+        model.communicationStyle = detectStyle(text);
+        model.language = detectLanguage(text);
+      }
+    } else {
+      model.communicationStyle = detectStyle(text);
+      model.language = detectLanguage(text);
+    }
+
+    updateTopics(model, text);
+    model.lastSeen = Date.now();
+
+    // Theory of Mind updates
+    applyTheoryOfMindUpdates(model, text, amygdalaResult, config);
+
+    persistModels();
+    bus.emit("mirror:user-updated", model);
+
+    return model;
+  }
+
+  return {
+    getOrCreateModel,
+    getUserModel,
+    observe,
+    processStyleReward,
+    getStyleRecommendation,
+    observeWithAI,
+  };
 }
 
-// ── User model management ───────────────────────────────────────────
+// ── User model management (чистые хелперы) ──────────────────────────
 
 function createDefaultModel(userId: string): UserModel {
   return {
@@ -94,75 +353,6 @@ function createDefaultModel(userId: string): UserModel {
     },
     intentHistory: [],
   };
-}
-
-export function getOrCreateModel(userId: string): UserModel {
-  let model = userModels.get(userId);
-  if (!model) {
-    model = createDefaultModel(userId);
-    userModels.set(userId, model);
-  }
-  return model;
-}
-
-export function getUserModel(userId: string): UserModel | undefined {
-  return userModels.get(userId);
-}
-
-// ── Observation: update model from incoming message ─────────────────
-
-/**
- * Observe a user message and update their model.
- * Called on every incoming message to build up understanding.
- */
-export function observe(
-  userId: string,
-  text: string,
-  amygdalaResult: AmygdalaAssessment,
-  config: BrainAgentConfig,
-): UserModel {
-  const model = getOrCreateModel(userId);
-
-  // Update emotion history
-  model.emotionHistory.push({
-    timestamp: Date.now(),
-    emotion: amygdalaResult.emotion,
-    intensity: amygdalaResult.emotionIntensity,
-  });
-
-  // Trim history to configured length
-  if (model.emotionHistory.length > config.empathy.emotionHistoryLength) {
-    model.emotionHistory = model.emotionHistory.slice(-config.empathy.emotionHistoryLength);
-  }
-
-  // Compute mood trend from recent emotions
-  model.moodTrend = computeMoodTrend(model.emotionHistory);
-
-  // Update stress level (exponential moving average)
-  const stressEmotions: EmotionLabel[] = ["frustration", "anger", "anxiety", "urgency"];
-  const isStressed = stressEmotions.includes(amygdalaResult.emotion);
-  const alpha = 0.3;
-  model.stressLevel =
-    model.stressLevel * (1 - alpha) + (isStressed ? amygdalaResult.emotionIntensity : 0) * alpha;
-
-  // Detect communication style
-  model.communicationStyle = detectStyle(text);
-
-  // Detect language
-  model.language = detectLanguage(text);
-
-  // Update frequent topics (simple keyword extraction)
-  updateTopics(model, text);
-  model.lastSeen = Date.now();
-
-  // Theory of Mind updates
-  applyTheoryOfMindUpdates(model, text, amygdalaResult, config);
-
-  // Persist and broadcast
-  persistModels();
-  bus.emit("mirror:user-updated", model);
-
-  return model;
 }
 
 // ── Style detection ─────────────────────────────────────────────────
@@ -289,61 +479,7 @@ function updateTopics(model: UserModel, text: string): void {
 }
 
 // ── Personality Evolution: reward-driven style adaptation ────────────
-//
-// In the real brain, dopaminergic pathways reinforce behavioral patterns
-// that lead to positive outcomes. Mirror neurons don't just mimic — they
-// learn which mirrored behaviors produce the best social results.
-//
-// Here, the dopamine reward signal is used to reinforce the communication
-// style that was active during each interaction cycle. Over time, the
-// system learns the style each user responds to best and adapts its
-// responses accordingly — true personality evolution.
 
-/**
- * Process a dopamine reward signal to update style preferences.
- * Called after each interaction cycle. Associates the reward with
- * the communication style that was active during the response.
- *
- * @param userId The user whose style preference to update
- * @param reward The reward signal (-1 to 1) from dopamine system
- * @param activeStyle The communication style used in this response cycle
- */
-export function processStyleReward(
-  userId: string,
-  reward: number,
-  activeStyle: CommunicationStyle,
-): void {
-  const model = getOrCreateModel(userId);
-
-  // Ensure styleRewards exists (for models loaded from old storage)
-  if (!model.styleRewards) {
-    model.styleRewards = {
-      formal: { total: 0, count: 0 },
-      informal: { total: 0, count: 0 },
-      terse: { total: 0, count: 0 },
-      verbose: { total: 0, count: 0 },
-    };
-  }
-
-  // Record reward for this style
-  const entry = model.styleRewards[activeStyle];
-  entry.total += reward;
-  entry.count++;
-
-  // Recompute preferred style from accumulated rewards
-  model.preferredResponseStyle = computePreferredStyle(model);
-
-  persistModels();
-}
-
-/**
- * Compute the preferred response style from reward history.
- *
- * Uses a combination of:
- * 1. Average reward per style (which style gets the best reactions)
- * 2. Minimum sample count (need enough data before switching)
- * 3. Exploration bonus for under-sampled styles (avoid getting stuck)
- */
 function computePreferredStyle(model: UserModel): CommunicationStyle {
   const styles: CommunicationStyle[] = ["formal", "informal", "terse", "verbose"];
 
@@ -378,57 +514,6 @@ function computePreferredStyle(model: UserModel): CommunicationStyle {
   return bestStyle;
 }
 
-/**
- * Get the style recommendation for a user, including explanation.
- * Used by the context builder to inject style guidance into the LLM prompt.
- */
-export function getStyleRecommendation(
-  userId: string,
-): { style: CommunicationStyle; confidence: number; context: string } | undefined {
-  const model = userModels.get(userId);
-  if (!model?.styleRewards) return undefined;
-
-  const preferred = model.preferredResponseStyle ?? model.communicationStyle;
-  const entry = model.styleRewards[preferred];
-  if (!entry || entry.count < 3) return undefined;
-
-  // Confidence = how much better this style is vs average
-  const styles: CommunicationStyle[] = ["formal", "informal", "terse", "verbose"];
-  const allAvgs = styles
-    .map((s) => {
-      const e = model.styleRewards[s];
-      return e && e.count > 0 ? e.total / e.count : 0;
-    })
-    .filter((v) => v !== 0);
-
-  const globalAvg = allAvgs.length > 0 ? allAvgs.reduce((a, b) => a + b, 0) / allAvgs.length : 0;
-  const preferredAvg = entry.total / entry.count;
-  const advantage = preferredAvg - globalAvg;
-
-  // Only recommend if there's a meaningful advantage
-  if (advantage < 0.05 && entry.count < 10) return undefined;
-
-  const confidence = Math.min(0.95, 0.3 + advantage * 2 + Math.min(entry.count / 30, 0.3));
-
-  const styleDescriptions: Record<CommunicationStyle, string> = {
-    formal: "Use polite, structured language with clear sections and professional tone.",
-    informal: "Use conversational, friendly tone — relaxed but helpful.",
-    terse: "Be concise and direct — short answers, no fluff.",
-    verbose: "Provide detailed, thorough explanations with examples and context.",
-  };
-
-  return {
-    style: preferred,
-    confidence,
-    context: [
-      "## Communication Style Adaptation (Personality Evolution)",
-      `This user responds best to **${preferred}** communication.`,
-      styleDescriptions[preferred],
-      `(Based on ${entry.count} interactions, confidence: ${(confidence * 100).toFixed(0)}%)`,
-    ].join("\n"),
-  };
-}
-
 // ── LLM-enhanced style detection ────────────────────────────────────
 
 const STYLE_PROMPT = `You are a communication style detector for a conversational AI.
@@ -454,97 +539,7 @@ Rules:
 Respond with ONLY a JSON object:
 {"style": "...", "expertise": "...", "language": "..."}`;
 
-/**
- * Observe user with LLM-enhanced style detection.
- * Falls back to pattern-based detection if LLM is unavailable.
- */
-export async function observeWithAI(
-  userId: string,
-  text: string,
-  amygdalaResult: AmygdalaAssessment,
-  config: BrainAgentConfig,
-  neuroConfig: NeuroClawConfig,
-  logger?: { info: (msg: string) => void },
-): Promise<UserModel> {
-  const model = getOrCreateModel(userId);
-
-  // Update emotion history (same as pattern-based)
-  model.emotionHistory.push({
-    timestamp: Date.now(),
-    emotion: amygdalaResult.emotion,
-    intensity: amygdalaResult.emotionIntensity,
-  });
-  if (model.emotionHistory.length > config.empathy.emotionHistoryLength) {
-    model.emotionHistory = model.emotionHistory.slice(-config.empathy.emotionHistoryLength);
-  }
-  model.moodTrend = computeMoodTrend(model.emotionHistory);
-
-  // Update stress level
-  const stressEmotions: EmotionLabel[] = ["frustration", "anger", "anxiety", "urgency"];
-  const isStressed = stressEmotions.includes(amygdalaResult.emotion);
-  const alpha = 0.3;
-  model.stressLevel =
-    model.stressLevel * (1 - alpha) + (isStressed ? amygdalaResult.emotionIntensity : 0) * alpha;
-
-  // Try LLM-enhanced style detection
-  const content = await callLLM(STYLE_PROMPT, text, neuroConfig, logger, 100);
-  if (content) {
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as {
-          style?: string;
-          expertise?: string;
-          language?: string;
-        };
-
-        const validStyles: CommunicationStyle[] = ["formal", "informal", "terse", "verbose"];
-        if (validStyles.includes(parsed.style as CommunicationStyle)) {
-          model.communicationStyle = parsed.style as CommunicationStyle;
-        } else {
-          model.communicationStyle = detectStyle(text);
-        }
-
-        const validExpertise = ["beginner", "intermediate", "expert"];
-        if (validExpertise.includes(parsed.expertise as string)) {
-          model.expertiseLevel = parsed.expertise as UserModel["expertiseLevel"];
-        }
-
-        if (parsed.language && typeof parsed.language === "string") {
-          model.language = parsed.language;
-        }
-      } else {
-        model.communicationStyle = detectStyle(text);
-        model.language = detectLanguage(text);
-      }
-    } catch {
-      model.communicationStyle = detectStyle(text);
-      model.language = detectLanguage(text);
-    }
-  } else {
-    model.communicationStyle = detectStyle(text);
-    model.language = detectLanguage(text);
-  }
-
-  updateTopics(model, text);
-  model.lastSeen = Date.now();
-
-  // Theory of Mind updates
-  applyTheoryOfMindUpdates(model, text, amygdalaResult, config);
-
-  persistModels();
-  bus.emit("mirror:user-updated", model);
-
-  return model;
-}
-
 // ── Theory of Mind (ToM) — Intent inference & relationship depth ───
-//
-// The human brain maintains a "theory of mind" — an ongoing model of
-// what others know, want, feel, and intend. These functions extend
-// the existing mirror-neuron empathy model with richer user modeling:
-// intent classification, per-domain knowledge estimation, mental state
-// tracking, interaction pattern analysis, and relationship depth.
 
 type InferredIntent =
   | "seeking_information"
@@ -938,4 +933,75 @@ export function buildTheoryOfMindContext(model: UserModel): string {
   }
 
   return lines.length > 1 ? lines.join("\n") : "";
+}
+
+// ── Слот активного инстанса (обратная совместимость) ────────────────
+
+let active: MirrorNeuronsInstance | undefined;
+
+/** Инстанс без персистентности — для вызовов до инициализации. */
+function current(): MirrorNeuronsInstance {
+  return active ?? (active = createMirrorNeurons(""));
+}
+
+// ── Initialization ──────────────────────────────────────────────────
+
+export function initMirrorStorage(workspaceDir: string): void {
+  active = createMirrorNeurons(workspaceDir);
+}
+
+// ── Core API (обёртки над активным инстансом) ───────────────────────
+
+export function getOrCreateModel(userId: string): UserModel {
+  return current().getOrCreateModel(userId);
+}
+
+export function getUserModel(userId: string): UserModel | undefined {
+  return current().getUserModel(userId);
+}
+
+/**
+ * Observe a user message and update their model.
+ */
+export function observe(
+  userId: string,
+  text: string,
+  amygdalaResult: AmygdalaAssessment,
+  config: BrainAgentConfig,
+): UserModel {
+  return current().observe(userId, text, amygdalaResult, config);
+}
+
+/**
+ * Process a dopamine reward signal to update style preferences.
+ */
+export function processStyleReward(
+  userId: string,
+  reward: number,
+  activeStyle: CommunicationStyle,
+): void {
+  current().processStyleReward(userId, reward, activeStyle);
+}
+
+/**
+ * Get the style recommendation for a user, including explanation.
+ */
+export function getStyleRecommendation(
+  userId: string,
+): { style: CommunicationStyle; confidence: number; context: string } | undefined {
+  return current().getStyleRecommendation(userId);
+}
+
+/**
+ * Observe user with LLM-enhanced style detection.
+ */
+export function observeWithAI(
+  userId: string,
+  text: string,
+  amygdalaResult: AmygdalaAssessment,
+  config: BrainAgentConfig,
+  neuroConfig: NeuroClawConfig,
+  logger?: { info: (msg: string) => void },
+): Promise<UserModel> {
+  return current().observeWithAI(userId, text, amygdalaResult, config, neuroConfig, logger);
 }

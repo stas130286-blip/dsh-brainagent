@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.3 — 2026-08-24
+
+Волна 1 миграции на per-instance состояние (пакет B2): predictive-engine, basal-ganglia, mirror-neurons. Внешний API не меняется.
+
+- `predictive-engine`, `basal-ganglia`, `mirror-neurons` переведены на фабрики (`createPredictiveEngine`, `createBasalGanglia`, `createMirrorNeurons`): состояние (паттерны предсказаний, привычки + векторный индекс, модели пользователей) и персистентность инкапсулированы в инстансе
+- Фабрики принимают `workspaceDir` (пустая строка = без персистентности); загрузка состояния — при создании инстанса
+- В каждом модуле остался ровно один module-level `let` — слот активного инстанса; вызовы до инициализации лениво используют detached-инстанс без персистентности (прежняя семантика сохранена)
+- Чистые функции без состояния (`detectReinforcement`, `detectReinforcementWithAI`, `buildHabitContext`, `buildTheoryOfMindContext` и все ToM-хелперы) остались свободными
+- +3 теста (instance-isolation.test.ts расширен до 6): изоляция паттернов, привычек и моделей пользователей между независимыми инстансами
+- 716 тестов / 42 файла; tsc чисто, smoke OK
+
 ## 0.6.2 — 2026-08-24
 
 Волна 1 миграции на per-instance состояние (пакет B): storage-модули. Внешний API не меняется.
