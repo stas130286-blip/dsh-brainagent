@@ -16,6 +16,17 @@ import Schema from "@deepseek-ai/schemastery";
 import { DEFAULT_CONFIG } from "../modules/types.ts";
 import type { BrainAgentConfig, MessageComplexity } from "../modules/types.ts";
 
+/** Глубокий Partial: необязательны все уровни вложенности. */
+export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends ReadonlyArray<infer U>
+    ? ReadonlyArray<U>
+    : T[K] extends Array<infer U>
+      ? Array<U>
+      : T[K] extends object
+        ? DeepPartial<T[K]>
+        : T[K];
+};
+
 export interface Config {
   /** Where BrainAgent persists its memory stores. */
   dataDir: string;
@@ -97,6 +108,13 @@ export interface Config {
   };
   /** Minimum gap between proactive (autonomous) messages, ms. */
   autonomousMinGapMs: number;
+  /**
+   * Единый конфиг (m6): прямая проекция внутреннего BrainAgentConfig.
+   * Любая секция (vitalImpulse, memory, dmn, ...) мержится поверх
+   * дефолтов глубоким мержем; верхний уровень `modules` остаётся
+   * главным для флагов модулей (он применяется поверх brain.modules).
+   */
+  brain?: DeepPartial<BrainAgentConfig>;
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -228,6 +246,10 @@ export const Config: Schema<Config> = Schema.object({
   autonomousMinGapMs: Schema.number()
     .default(10 * 60 * 1000)
     .description("Minimum gap between proactive (autonomous) messages, ms"),
+  // m6: любая секция внутреннего BrainAgentConfig без дублирования схемы.
+  brain: Schema.any().description(
+    "Internal BrainAgentConfig overrides (memory, vitalImpulse, dmn, ...) deep-merged over defaults",
+  ),
 });
 
 /**
@@ -251,7 +273,7 @@ export function mergeBrainConfig(config: Config): BrainAgentConfig {
     const target = MODULE_FLAG_MAP[key] ?? (key as keyof BrainAgentConfig["modules"]);
     if (target in modules) modules[target] = value;
   }
-  return {
+  const merged: BrainAgentConfig = {
     ...DEFAULT_CONFIG,
     modules,
     dualProcess: {
@@ -278,6 +300,41 @@ export function mergeBrainConfig(config: Config): BrainAgentConfig {
       },
     },
   };
+  // m6: единый конфиг — секции из config.brain мержатся поверх базы.
+  const result = config.brain ? deepMergeConfig(merged, config.brain) : merged;
+  // Флаги верхнего уровня config.modules остаются главным источником
+  // истины и перебивают результат мержа brain.modules.
+  for (const [key, value] of Object.entries(config.modules)) {
+    if (typeof value !== "boolean") continue;
+    const targetKey = MODULE_FLAG_MAP[key] ?? (key as keyof BrainAgentConfig["modules"]);
+    if (targetKey in result.modules) result.modules[targetKey] = value;
+  }
+  return result;
+}
+
+/**
+ * Глубокий мерж конфигов: обычные объекты рекурсивно объединяются,
+ * массивы и примитивы заменяются целиком. null/undefined не затирают
+ * базовые значения.
+ */
+function deepMergeConfig<T extends Record<string, any>>(base: T, override: Record<string, any>): T {
+  const result: Record<string, any> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    if (value === undefined || value === null) continue;
+    const prev = result[key];
+    if (
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof prev === "object" &&
+      prev !== null &&
+      !Array.isArray(prev)
+    ) {
+      result[key] = deepMergeConfig(prev, value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result as T;
 }
 
 // v0.5.2: маркеры автономии живут в слое modules (autonomy-markers.ts) —
