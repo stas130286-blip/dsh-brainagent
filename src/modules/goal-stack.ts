@@ -791,6 +791,7 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
         ? (triggerType as GoalTrigger["type"])
         : "topic";
       let condition = triggerCondition;
+      let goalTTLMs: number | undefined;
       // v0.9.5: LLM отдаёт time-условия ISO-датой («2026-08-28T09:00»),
       // потому что epoch-миллисекунды модели недоступны. Конвертируем
       // в epoch мс — формат, который понимают time-триггеры.
@@ -803,6 +804,11 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
           continue;
         }
         condition = String(parsed);
+        // v0.9.10: TTL time-цели обязан дожить до момента срабатывания —
+        // иначе напоминание «через месяц» молча истекает за дефолтные 24ч.
+        // Берём время до триггера + час буфера, но не меньше дефолтного TTL.
+        const untilTriggerMs = parsed - Date.now() + 60 * 60 * 1000;
+        if (untilTriggerMs > 0) goalTTLMs = Math.max(defaultTTLMs, untilTriggerMs);
       }
 
       const goal = createGoal(
@@ -811,7 +817,7 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
         "llm-extraction",
         contextInjection,
         Math.max(0, Math.min(1, priority)),
-        undefined,
+        goalTTLMs,
         recurringMinutes
           ? { intervalMs: recurringMinutes * 60 * 1000, maxRecurrences: 10 }
           : undefined,
@@ -1144,7 +1150,7 @@ export function checkAutonomousGoals(idleMs?: number): Goal[] {
  * формулировки извлекаем сразу.
  */
 const GOAL_INTENT_PATTERN =
-  /планирую|запланир|моя цель|мои цели|поставь цель|надо не забыть|не забудь|напомни мне|хочу успеть|задачи на (?:неделю|сегодня|завтра)|\bgoal\b|\bplan\b|\btodo\b|remind me/i;
+  /планирую|запланир|моя цель|мои цели|поставь цель|поставь(?: мне)? напоминание|напоминание (?:на|через|о|об|про)|надо не забыть|не забудь|напомни(?:те)?(?: мне)?|хочу успеть|задачи на (?:неделю|сегодня|завтра)|\bgoal\b|\bplan\b|\btodo\b|\bremind\b/i;
 
 export function hasGoalIntent(text: string): boolean {
   return GOAL_INTENT_PATTERN.test(text);

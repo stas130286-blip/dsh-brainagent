@@ -20,7 +20,8 @@ import { observeWithAI, getStyleRecommendation } from "../modules/mirror-neurons
 import { detectReinforcementWithAI, findHabit, buildHabitContext } from "../modules/basal-ganglia.ts";
 import { isAIProviderAvailable } from "../modules/ai-extractor.ts";
 import { getAttentionLevel, getNeuromodulatorState } from "../modules/dopamine-system.ts";
-import { recallAllAsync } from "../modules/hippocampus.ts";
+import { recallAllAsync, getFactsByCategory } from "../modules/hippocampus.ts";
+import { pinIdentityFacts } from "../modules/memory-identity.ts";
 import { predict } from "../modules/predictive-engine.ts";
 import { buildNeuromodulatorContext } from "../modules/neural-pathways.ts";
 import { buildLearningContext, buildCapabilityContext } from "../modules/learning-coordinator.ts";
@@ -222,6 +223,11 @@ export function createPreStepHandler(deps: PreStepDeps) {
     const episodicLimit = Math.max(1, Math.round(config.recall.episodicLimit * (0.5 + attentionLevel)));
     const semanticLimit = Math.max(1, Math.round(config.recall.semanticLimit * (0.5 + attentionLevel)));
     const recalled = await recallAllAsync(input, episodicLimit, semanticLimit);
+    // v0.9.12: пиннинг identity-фактов (имя, имущество, работа). Они не
+    // должны зависеть от релевантности запроса: вопрос «что ты знаешь
+    // обо мне?» не может остаться без имени из-за лексического
+    // fallback-а или пустого эмбеддинг-кэша.
+    recalled.semantic = pinIdentityFacts(recalled.semantic, getFactsByCategory("user_info", 3));
     cyc.recalledMemoryIds = [
       ...recalled.episodic.map((m) => m.id),
       ...recalled.semantic.map((m) => m.id),

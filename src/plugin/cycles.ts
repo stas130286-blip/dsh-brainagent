@@ -29,7 +29,7 @@ import { isAIProviderAvailable, extractFactsWithAI } from "../modules/ai-extract
 import { validate, validateAsync } from "../modules/cerebellum.ts";
 import { storeEpisode, storeFact, storeWorkflow } from "../modules/hippocampus.ts";
 import { extractFacts, isFactWorthy } from "../modules/semantic-extractor.ts";
-import { isProcedural, extractProcedureAsync } from "../modules/procedural-extractor.ts";
+import { isProcedural, extractProcedureAsync, isStorableProcedure } from "../modules/procedural-extractor.ts";
 import { processInteractionOutcome, getNeuromodulatorState } from "../modules/dopamine-system.ts";
 import { getUserModel, processStyleReward } from "../modules/mirror-neurons.ts";
 import { endCycle as endStructuralCycle } from "../modules/structural-plasticity.ts";
@@ -374,10 +374,11 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
       isProcedural(input, cycle.classification)
     ) {
       const procedure = await extractProcedureAsync(input, getHostConfig(), cycle.classification, logger);
-      // v0.9.3: процедуры без шагов — шум (вопросы вида «как у тебя
-      // дела»): они попадали в инъекции пустыми «Learned Workflow».
-      // Сохраняем только содержательные (шаги есть) извлечения.
-      if (procedure && procedure.confidence > 0.5 && procedure.steps.length > 0) {
+      // v0.9.13: храним только настоящие многоступенчатые процедуры.
+      // Одиночные команды («Action: ANY», «Действие: напоминание»)
+      // процедурой не являются — они засоряли стор (14 из 16 записей
+      // в боевом сторе оказались мусором без переиспользования).
+      if (procedure && isStorableProcedure(procedure)) {
         storeWorkflow(procedure.description, procedure.triggerPattern, procedure.steps);
         logger.info(`BrainAgent Procedural: stored workflow "${procedure.description}"`);
       }

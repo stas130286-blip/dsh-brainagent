@@ -14,7 +14,7 @@
 
 **BrainAgent** — плагин для [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness), который превращает штатного агента из исполнителя разовых задач в **долгоживущего персонального ассистента** с внутренней когнитивной системой, смоделированной по принципам работы мозга.
 
-~60 модулей, 6 точек интеграции с платформой, **805 unit-тестов**, всё работает поверх штатных хуков dsh. Единственное исключение — анти-спам-патч хостового goal-round-driver: он лежит в `host-patches/` и применяется автоматически при установке (postinstall); после обновления dsh скрипт достаточно перезапустить вручную.
+~60 модулей, 6 точек интеграции с платформой, **850 unit-тестов**, всё работает поверх штатных хуков dsh. Единственное исключение — анти-спам-патч хостового goal-round-driver: он лежит в `host-patches/` и применяется автоматически при установке (postinstall); после обновления dsh скрипт достаточно перезапустить вручную.
 
 ## Возможности
 
@@ -120,7 +120,7 @@ npx @deepseek-ai/dsh web
 
 ```sh
 pnpm install        # из корня monorepo dsh
-pnpm vitest run     # 52 файла, 805 тестов
+pnpm vitest run     # 56 файлов, 850 тестов
 ```
 
 Помимо юнит-тестов модулей есть интеграционный eval-харнесс (`src/eval/`):
@@ -197,7 +197,7 @@ merge конфига, `autonomy.ts` — проактивная доставка 
 
 **BrainAgent** is a plugin for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) that turns the stock agent into a long-lived personal assistant with a brain-inspired cognitive system.
 
-~60 modules, 6 platform integration points, **654 unit tests**, running entirely on stock dsh hooks — zero core changes.
+~60 modules, 6 platform integration points, **850 unit tests**, running entirely on stock dsh hooks — zero core changes.
 
 **Highlights**
 
@@ -226,6 +226,6 @@ Ships a prebuilt bundle (`lib/index.js`) — git installs need no build step and
 
 **Commands**: `/brain status`, `/brain memory <query>`, `/brain goals`, `/brain neuro`, `/brain habits`, `/brain learning`, `/brain circadian`, `/brain dream` and more
 
-**Tests**: `pnpm vitest run` — 33 files, 654 tests
+**Tests**: `pnpm vitest run` — 56 files, 850 tests
 
 **License**: BrainAgent Noncommercial License — free noncommercial use for everyone; commercial use requires an agreement with the author. See [LICENSE](LICENSE).

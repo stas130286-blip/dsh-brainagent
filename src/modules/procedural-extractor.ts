@@ -199,6 +199,40 @@ function isQualityTrigger(trigger: string): boolean {
   return true;
 }
 
+// ── Step quality gate (v0.9.13) ─────────────────────────────────────
+
+/** Шаги-плейсхолдеры, которые LLM/regex выдают вместо реальных действий. */
+const PLACEHOLDER_STEP =
+  /^(?:\.{2,}|…|any|anything|something|none|n\/a|todo|шаг\s*\d*|step\s*\d*|[-—–]+|любое|что-нибудь|что-то)\.?$/i;
+
+/**
+ * Реальный ли шаг: не плейсхолдер, достаточной длины
+ * и не повторяет сам триггер (шаг = запрос — не процедура).
+ */
+export function isMeaningfulStep(step: string, trigger?: string): boolean {
+  const s = step.trim();
+  if (s.length < 3) return false;
+  if (PLACEHOLDER_STEP.test(s)) return false;
+  if (trigger && s.toLowerCase() === trigger.trim().toLowerCase()) return false;
+  return true;
+}
+
+/**
+ * v0.9.13: гейт сохраняемости процедуры. «Процедура» требует минимум два
+ * реальных уникальных шага — одиночная команда («создай напоминание»)
+ * процедурой не является: такие записи («Action: ANY», 0–1 шага)
+ * засоряли стор и не давали пользы при переиспользовании.
+ */
+export function isStorableProcedure(pattern: ProceduralPattern): boolean {
+  if (pattern.confidence <= 0.5) return false;
+  const uniqueSteps = new Set(
+    pattern.steps
+      .filter((s) => isMeaningfulStep(s, pattern.triggerPattern))
+      .map((s) => s.trim().toLowerCase()),
+  );
+  return uniqueSteps.size >= 2;
+}
+
 /**
  * Extract procedural patterns from user input.
  * Returns patterns that could become procedural memories.
@@ -302,8 +336,12 @@ const PROCEDURE_PROMPT = `Ты — модуль извлечения проце�
 Если да — извлеки:
 - trigger: ключевые слова запроса (краткий паттерн)
 - description: краткое описание процедуры
-- steps: массив шагов (если можно определить, иначе пустой)
+- steps: массив шагов. Бери ТОЛЬКО шаги, явно присутствующие в сообщении. Не выдумывай шаги. Если последовательность действий не описана — верни пустой массив []
 - domain: "technical" | "command" | "factual" | "casual"
+
+Важно: одиночная команда без последовательности действий («создай напоминание», «запусти сервер») — НЕ процедура.
+
+Важно: одиночная команда без последовательности действий («создай напоминание», «запусти сервер») — НЕ процедура.
 
 Ответ СТРОГО в JSON (без markdown):
 {"isProcedure":true,"trigger":"...","description":"...","steps":["шаг1","шаг2"],"domain":"technical"}
@@ -311,7 +349,7 @@ const PROCEDURE_PROMPT = `Ты — модуль извлечения проце�
 Если сообщение НЕ описывает процедуру:
 {"isProcedure":false}`;
 
-function parseProcedureResponse(
+export function parseProcedureResponse(
   response: string,
   classification?: ThalamusClassification,
 ): ProceduralPattern | null {
@@ -327,7 +365,8 @@ function parseProcedureResponse(
     const steps: string[] = [];
     if (Array.isArray(parsed.steps)) {
       for (const s of parsed.steps) {
-        if (typeof s === "string") steps.push(s);
+        // v0.9.13: отбрасываем плейсхолдеры LLM («...», «any») — мусор
+        if (typeof s === "string" && isMeaningfulStep(s, trigger)) steps.push(s);
       }
     }
     const domain =

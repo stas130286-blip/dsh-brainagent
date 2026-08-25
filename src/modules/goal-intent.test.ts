@@ -23,6 +23,11 @@ describe("hasGoalIntent — явное целеполагание (v0.9.4)", () 
     expect(hasGoalIntent("Не забудь про релиз в пятницу.")).toBe(true);
     expect(hasGoalIntent("Надо не забыть обновить зависимости.")).toBe(true);
     expect(hasGoalIntent("Хочу успеть закончить проект до отпуска.")).toBe(true);
+    // v0.9.10: существительное «напоминание» и краткое «напомни» без «мне»
+    expect(hasGoalIntent("Поставь мне напоминание через месяц проверить сервер.")).toBe(true);
+    expect(hasGoalIntent("Поставь напоминание на завтра.")).toBe(true);
+    expect(hasGoalIntent("Напомни проверить домашний сервер Атлас.")).toBe(true);
+    expect(hasGoalIntent("Напоминание про отчёт на пятницу.")).toBe(true);
   });
 
   it("ловит задачи на период", () => {

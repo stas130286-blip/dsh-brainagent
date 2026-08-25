@@ -68,6 +68,8 @@ import {
   storeFact,
   storeEpisode,
   getFactsByCategory,
+  pruneWeakWorkflows,
+  mergeDuplicateWorkflows,
 } from "./modules/hippocampus.ts";
 import { initWorkingMemoryStorage, getWorkingMemoryStats } from "./modules/working-memory.ts";
 import { initAttentionGate, getAttentionStats } from "./modules/attention-gate.ts";
@@ -105,6 +107,7 @@ import { initDriveArbiter, stopDriveArbiter, getDriveArbiterStats } from "./modu
 import { initVitalImpulse, stopVitalImpulse, resetConsecutiveFires, getVitalImpulseStats } from "./modules/vital-impulse.ts";
 import { initGoalExecutor, stopGoalExecutor } from "./modules/goal-executor.ts";
 import { startGoalReminderScheduler, createGoalRoundGuard } from "./modules/goal-reminder.ts";
+import { startGoalRoundPacer, type GoalRoundPacerGoals } from "./modules/goal-round-pacer.ts";
 import { initAutonomyEnricher, stopAutonomyEnricher } from "./modules/autonomy-enricher.ts";
 import { initAutonomousResearch, stopAutonomousResearch, getAutonomousResearchStats } from "./modules/autonomous-research.ts";
 import { startDreamMode, stopDreamMode } from "./modules/dream-mode.ts";
@@ -278,6 +281,17 @@ export function apply(ctx: Context, config: Config) {
 
   // ── Initialize storage layers ───────────────────────────────
   initMemoryStorage(dataDir);
+  // v0.9.13: чистка процедурного стора от слабых записей («Action: ANY»),
+  // накопленных ранними версиями экстрактора. Идемпотентна и дёшева.
+  const prunedWorkflows = pruneWeakWorkflows(2);
+  if (prunedWorkflows > 0) {
+    logger.info(`BrainAgent Procedural: pruned ${prunedWorkflows} weak workflow(s)`);
+  }
+  // v0.9.14: слияние дублей, накопленных до появления дедупликации по шагам
+  const mergedWorkflows = mergeDuplicateWorkflows();
+  if (mergedWorkflows > 0) {
+    logger.info(`BrainAgent Procedural: merged ${mergedWorkflows} duplicate workflow(s)`);
+  }
   initEmbeddings(hostConfig(), logger);
   if (brainConfig.modules.workingMemory) {
     initWorkingMemoryStorage(dataDir, brainConfig);
@@ -404,6 +418,26 @@ export function apply(ctx: Context, config: Config) {
   // Хост без патча пейсинга (host-patches/) спамит гол-раундами —
   // предупреждаем один раз, чтобы пользователь знал причину.
   const notifyGoalRound = createGoalRoundGuard((msg) => logger.warn(msg));
+
+  // v0.9.11: runtime-пейсер гол-раундов. В registry-сборке dsh пейсинга
+  // нет: armed-цель хоста получает раунд на каждый переход агента в idle.
+  // Троттлим публичными швами (событие inbox + сервис целей), не трогая
+  // файлы хоста. Окно: DSH_GOAL_ROUND_MIN_IDLE_MS, 0 = выключить.
+  let stopGoalRoundPacer: (() => void) | undefined;
+  if (brainConfig.modules.goalStack) {
+    stopGoalRoundPacer = startGoalRoundPacer({
+      onInserted: (handler) =>
+        (ctx.on as unknown as (event: string, fn: typeof handler) => unknown)(
+          "agent/inbox/inserted",
+          handler,
+        ),
+      goals: () =>
+        (ctx as unknown as { get?: (name: string) => unknown }).get?.("goals") as
+          | GoalRoundPacerGoals
+          | undefined,
+      logger,
+    });
+  }
 
   // Autonomy Enricher: memory-driven motivation enrichment.
   if (brainConfig.modules.actionDispatcher && brainConfig.modules.vitalImpulse) {
@@ -858,6 +892,7 @@ export function apply(ctx: Context, config: Config) {
       if (brainConfig.modules.vitalImpulse) stopVitalImpulse();
       if (brainConfig.modules.goalStack) stopGoalExecutor();
       stopGoalReminder?.();
+      stopGoalRoundPacer?.();
       if (brainConfig.modules.socialDrive) stopSocialDrive();
       if (brainConfig.modules.cognitiveHunger) stopCognitiveHunger();
       if (brainConfig.modules.creativeDrive) stopCreativeDrive();

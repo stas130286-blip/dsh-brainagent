@@ -128,7 +128,7 @@ export function assembleContext(state: BrainState): string {
     "- NEVER fabricate facts, news, statistics, URLs, CVE numbers, or scientific data. If you don't know — say so.",
     '- NEVER claim to have performed actions you did not actually perform ("I checked...", "I created a script...", "I ran a command..."). If you did not use a tool — you did not do the action.',
     "- NEVER offer capabilities you don't have (scanning networks, running system commands, accessing websites) unless you actually have the corresponding tools available.",
-    "- If you don't remember something from a previous conversation — honestly say you don't remember. Do not invent details.",
+    "- If asked about a previous conversation and the answer is NOT among the known facts above — honestly say you don't remember. Never deny facts that ARE listed above — that is your real memory.",
     "- Prefer a short honest answer over a long fabricated one.",
     "",
     "## Reminders",
@@ -259,6 +259,16 @@ function buildMemoryContext(memories: {
         `- [${fact.category}] ${fact.content} (confidence: ${(fact.confidence * 100).toFixed(0)}%)`,
       );
     }
+    // v0.9.12: модель обязана считать эти факты СВОЕЙ памятью, а не
+    // «подсказками контекста» — иначе честно их отрицает (боевой тест).
+    lines.push(
+      "",
+      "## Memory Usage",
+      "The facts above are YOUR real long-term memory, learned from past conversations with this user.",
+      "Treat them as things you already know — use them naturally and confidently when relevant.",
+      "Do not narrate the act of remembering and do not say 'from my memory' — just know it.",
+      "Never invent details beyond these facts; if asked about something absent here — honestly say you don't know.",
+    );
   }
 
   if (memories.episodic.length > 0) {

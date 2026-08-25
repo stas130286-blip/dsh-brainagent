@@ -190,6 +190,8 @@ export interface HippocampusInstance {
   storeWorkflow(description: string, triggerPattern: string, steps: string[]): ProceduralMemory;
   findMatchingWorkflow(input: string): ProceduralMemory | undefined;
   recordWorkflowOutcome(procId: string, success: boolean): void;
+  pruneWeakWorkflows(minSteps?: number): number;
+  mergeDuplicateWorkflows(): number;
   recallAll(
     query: string,
     episodicLimit?: number,
@@ -1022,6 +1024,19 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       persistProcedural();
       return existing;
     }
+    // v0.9.14: LLM формулирует триггер по-разному при каждой диктовке,
+    // но процедура (набор шагов) та же — сливаем по отпечатку шагов.
+    // Одиночные шаги не сливаем: это старые одношаговые записи, у них
+    // смысл различается именно триггером.
+    const fp = stepsFingerprint(steps);
+    if (fp && fp.split("\u0000").length >= 2) {
+      const sameSteps = proceduralStore.find((p) => stepsFingerprint(p.steps) === fp);
+      if (sameSteps) {
+        sameSteps.lastUsed = Date.now();
+        persistProcedural();
+        return sameSteps;
+      }
+    }
     const proc: ProceduralMemory = {
       id: nextId("proc"),
       description,
@@ -1078,6 +1093,86 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     const alpha = 0.3;
     proc.successRate = proc.successRate * (1 - alpha) + (success ? 1 : 0) * alpha;
     persistProcedural();
+  }
+
+  /**
+   * v0.9.13: чистка стора от слабых процедур (меньше minSteps
+   * содержательных уникальных шагов). Ранние версии экстрактора
+   * накапливали мусор вида «Action: ANY» (0–1 шаг). Идемпотентна.
+   */
+  function pruneWeakWorkflows(minSteps = 2): number {
+    const keep: ProceduralMemory[] = [];
+    let removed = 0;
+    for (const proc of proceduralStore) {
+      const uniqueSteps = new Set(
+        proc.steps
+          .map((s) => s.trim())
+          .filter((s) => s.length >= 3)
+          .map((s) => s.toLowerCase()),
+      );
+      if (uniqueSteps.size >= minSteps) {
+        keep.push(proc);
+      } else {
+        proceduralIndex.remove(proc.id);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      proceduralStore = keep;
+      persistProcedural();
+    }
+    return removed;
+  }
+
+  /**
+   * v0.9.14: нормализованный «отпечаток» набора шагов —
+   * регистр и пробелы не важны, порядок не важен.
+   */
+  function stepsFingerprint(stepsArr: string[]): string {
+    return stepsArr
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length >= 3)
+      .sort()
+      .join("\u0000");
+  }
+
+  /**
+   * v0.9.14: слияние дублей процедур с одинаковым набором шагов.
+   * LLM формулирует триггер по-разному при каждой диктовке, поэтому
+   * точное сравнение триггеров пропускает дубли. Оставляет самую
+   * используемую запись, суммируя usageCount и лучший successRate.
+   */
+  function mergeDuplicateWorkflows(): number {
+    const byFingerprint = new Map<string, ProceduralMemory[]>();
+    for (const proc of proceduralStore) {
+      const fp = stepsFingerprint(proc.steps);
+      if (!fp) continue;
+      const group = byFingerprint.get(fp);
+      if (group) group.push(proc);
+      else byFingerprint.set(fp, [proc]);
+    }
+    let merged = 0;
+    for (const group of byFingerprint.values()) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => b.usageCount - a.usageCount || b.lastUsed - a.lastUsed);
+      const keep = group[0];
+      for (const dup of group.slice(1)) {
+        keep.usageCount += dup.usageCount;
+        keep.lastUsed = Math.max(keep.lastUsed, dup.lastUsed);
+        keep.successRate = Math.max(keep.successRate, dup.successRate);
+        proceduralIndex.remove(dup.id);
+        merged++;
+      }
+      proceduralIndex.remove(keep.id);
+      proceduralIndex.add(
+        keep.id,
+        `${keep.description} ${keep.triggerPattern} ${keep.steps.join(" ")}`,
+      );
+      const drop = new Set(group.slice(1).map((d) => d.id));
+      proceduralStore = proceduralStore.filter((p) => !drop.has(p.id));
+    }
+    if (merged > 0) persistProcedural();
+    return merged;
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1468,6 +1563,8 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     storeWorkflow,
     findMatchingWorkflow,
     recordWorkflowOutcome,
+    pruneWeakWorkflows,
+    mergeDuplicateWorkflows,
     recallAll,
     recallAllAsync,
     consolidate,
@@ -1632,6 +1729,14 @@ export function findMatchingWorkflow(input: string): ProceduralMemory | undefine
 
 export function recordWorkflowOutcome(procId: string, success: boolean): void {
   current().recordWorkflowOutcome(procId, success);
+}
+
+export function pruneWeakWorkflows(minSteps = 2): number {
+  return current().pruneWeakWorkflows(minSteps);
+}
+
+export function mergeDuplicateWorkflows(): number {
+  return current().mergeDuplicateWorkflows();
 }
 
 export function recallAll(
