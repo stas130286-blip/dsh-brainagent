@@ -131,6 +131,10 @@ export function assembleContext(state: BrainState): string {
     "- If you don't remember something from a previous conversation — honestly say you don't remember. Do not invent details.",
     "- Prefer a short honest answer over a long fabricated one.",
     "",
+    "## Reminders",
+    "- If the user asks to be reminded about something later: your internal reminder clock is already tracking it. Just confirm briefly.",
+    "- NEVER create your own timers, sleep commands, or background jobs for reminders — that duplicates the internal mechanism and the user receives the same reminder twice.",
+    "",
     "Your internal state shapes HOW you respond, not WHAT you say about yourself.",
     "Respond naturally — as a person, not a system reporting its state.",
   );
