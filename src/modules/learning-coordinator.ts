@@ -261,6 +261,11 @@ export function createLearningCoordinator(
         const rewardsA = metricsA.recentRewards.slice(-len);
         const rewardsB = metricsB.recentRewards.slice(-len);
 
+        // v0.9.19: идентичные последовательности наград = модули синхронно
+        // получают один и тот же сигнал (credit assignment равен для всех).
+        // Корреляция r=1.00 здесь — структурный шум, а не наблюдение.
+        if (rewardsA.every((v, i) => v === rewardsB[i])) continue;
+
         const correlation = computeCorrelation(rewardsA, rewardsB);
 
         // Strong positive correlation: modules work well together
