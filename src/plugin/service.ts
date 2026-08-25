@@ -19,7 +19,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Desire, EpisodicMemory, ProceduralMemory, SemanticMemory } from "../modules/types.ts";
 
 /** Версия плагина, которую видит потребитель сервиса. */
-export const BRAINAGENT_VERSION = "0.9.14";
+export const BRAINAGENT_VERSION = "0.9.15";
 
 /** Результат комбинированного поиска по слоям памяти. */
 export interface BrainAgentRecallResult {

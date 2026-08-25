@@ -11,6 +11,7 @@
  */
 
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
+import { BRAINAGENT_VERSION } from "../plugin/service.ts";
 import { getBasalStats } from "./basal-ganglia.ts";
 import { getCircadianStats, forcePhase } from "./circadian-rhythm.ts";
 import { getDopamineStats } from "./dopamine-system.ts";
@@ -863,6 +864,8 @@ export function createCommandRegistry(): CommandRegistryInstance {
 
     const lines = [
       "**BrainAgent Cognitive Architecture — Status**",
+      "",
+      `**Version:** v${BRAINAGENT_VERSION}`,
       "",
       "**Core Modules:**",
       `  Thalamus (classifier):        ${config.modules.thalamus ? "ON" : "OFF"}`,

@@ -1,6 +1,6 @@
 {
   "name": "dsh-brainagent",
-  "version": "0.9.14",
+  "version": "0.9.15",
   "description": "BrainAgent — brain-inspired plugin for DeepSeek Harness (dsh): a pipeline of heuristic filters, statistical memory stores and context injections; reward-ledger + UCB1 bandit learning loop (RL-lite)",
   "type": "module",
   "main": "lib/index.js",
@@ -12,7 +12,6 @@
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node host-patches/postinstall.cjs",
     "build": "esbuild src/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=lib/index.js --external:@deepseek-ai/*",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
