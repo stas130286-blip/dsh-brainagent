@@ -210,6 +210,7 @@ export function apply(ctx: Context, config: Config) {
     state,
     brainConfig,
     minGapMs: config.autonomousMinGapMs ?? 10 * 60 * 1000,
+    minUserSilenceMs: config.autonomousUserSilenceMs ?? 3 * 60 * 1000,
     logger,
     pickAgent,
     deliver: (agent, framed) => {

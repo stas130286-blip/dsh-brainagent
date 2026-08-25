@@ -14,7 +14,7 @@
 
 **BrainAgent** — плагин для [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness), который превращает штатного агента из исполнителя разовых задач в **долгоживущего персонального ассистента** с внутренней когнитивной системой, смоделированной по принципам работы мозга.
 
-~60 модулей, 6 точек интеграции с платформой, **857 unit-тестов**, всё работает поверх штатных хуков dsh без единого исключения: анти-спам-пейсинг гол-раундов встроен в сам плагин, патчить хост не нужно. Установка — одна команда, без сборки и разрешений на скрипты.
+~60 модулей, 6 точек интеграции с платформой, **860 unit-тестов**, всё работает поверх штатных хуков dsh без единого исключения: анти-спам-пейсинг гол-раундов встроен в сам плагин, патчить хост не нужно. Установка — одна команда, без сборки и разрешений на скрипты.
 
 ## Возможности
 
@@ -131,7 +131,7 @@ npx @deepseek-ai/dsh web
 
 ```sh
 pnpm install        # из корня monorepo dsh
-pnpm vitest run     # 57 файлов, 857 тестов
+pnpm vitest run     # 57 файлов, 860 тестов
 ```
 
 Помимо юнит-тестов модулей есть интеграционный eval-харнесс (`src/eval/`):
@@ -207,7 +207,7 @@ merge конфига, `autonomy.ts` — проактивная доставка 
 
 **BrainAgent** is a plugin for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) that turns the stock agent into a long-lived personal assistant with a brain-inspired cognitive system.
 
-~60 modules, 6 platform integration points, **857 unit tests**, running entirely on stock dsh hooks — zero core changes.
+~60 modules, 6 platform integration points, **860 unit tests**, running entirely on stock dsh hooks — zero core changes.
 
 **Highlights**
 
@@ -247,6 +247,6 @@ Ships a prebuilt bundle (`lib/index.js`) and **contains no install scripts**.
 
 **Commands**: `/brain status`, `/brain memory <query>`, `/brain goals`, `/brain neuro`, `/brain habits`, `/brain learning`, `/brain circadian`, `/brain dream` and more
 
-**Tests**: `pnpm vitest run` — 57 files, 857 tests
+**Tests**: `pnpm vitest run` — 57 files, 860 tests
 
 **License**: BrainAgent Noncommercial License — free noncommercial use for everyone; commercial use requires an agreement with the author. See [LICENSE](LICENSE).

@@ -248,6 +248,12 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
     const input = cycle.input;
     const isAutonomousCycle = isAutonomousInput(input);
 
+    // v0.9.18: фиксируем время настоящего сообщения пользователя —
+    // для тихого гарда проактивных доставок (не вклиниваться после диалога).
+    if (!isAutonomousCycle) {
+      state.lastUserMessageAt = Date.now();
+    }
+
     // ── Autonomous cycle: synthesize emotion + domain from drive state ──
     // When the cycle was triggered by drives (not the user), derive the
     // emotional context from the active drives instead of the
@@ -576,8 +582,12 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
     // Curiosity drive: detect knowledge gaps and turn recurring gaps
     // into exploration desires.
     if (brainConfig.modules.curiosityDrive && cycle.classification) {
-      const recallSparse = cycle.recalledMemoryIds.length <= 1;
-      detectKnowledgeGap(input.slice(0, 100), cycle.classification.domain, recallSparse);
+      // v0.9.18: приветствия и тривиальности — не пробел в знаниях, иначе
+      // «Привет! Как дела?» становится «незакрытым вопросом» и поводом для инициативы.
+      if (cycle.classification.complexity !== "trivial") {
+        const recallSparse = cycle.recalledMemoryIds.length <= 1;
+        detectKnowledgeGap(input.slice(0, 100), cycle.classification.domain, recallSparse);
+      }
 
       if (brainConfig.modules.goalStack) {
         for (const gap of getOpenGaps()) {

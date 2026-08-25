@@ -46,6 +46,8 @@ export type AutonomyState = {
   lastAutonomousDomain: string;
   /** Timestamp of the last proactive delivery (minimum-gap check). */
   lastAutonomousDeliveryAt: number;
+  /** Timestamp of the last genuine user message (quiet-time guard, v0.9.18). */
+  lastUserMessageAt: number;
   /**
    * Буфер блока воспоминаний автономи-энричера: вливается в
    * следующую доставку с реальным содержанием (v0.9.1) — соло
@@ -62,6 +64,7 @@ export function createAutonomyState(): AutonomyState {
     lastAutonomousEpisodeId: undefined,
     lastAutonomousDomain: "unknown",
     lastAutonomousDeliveryAt: 0,
+    lastUserMessageAt: 0,
     pendingMemoryContext: undefined,
   };
 }
@@ -200,6 +203,8 @@ export type AutonomousDelivererDeps = {
   brainConfig: BrainAgentConfig;
   /** Minimum gap between proactive messages (ms). */
   minGapMs: number;
+  /** Minimum user silence before proactive delivery (ms, v0.9.18). */
+  minUserSilenceMs: number;
   logger: { info: (msg: string) => void; warn: (msg: string) => void };
   /** Pick the live agent to deliver through (undefined → drop). */
   pickAgent: () => Agent | undefined;
@@ -215,7 +220,7 @@ export type AutonomousDelivererDeps = {
  * in a row autonomously), minimum gap, and suppressed (rejected) domains.
  */
 export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text: string) => void {
-  const { state, brainConfig, minGapMs, logger } = deps;
+  const { state, brainConfig, minGapMs, minUserSilenceMs, logger } = deps;
 
   return function enqueueAutonomousIntent(text: string): void {
     const trimmed = text.trim();
@@ -251,6 +256,15 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
       // Minimum gap between proactive messages (default 10 min).
       if (Date.now() - state.lastAutonomousDeliveryAt < minGapMs) {
         logger.info("BrainAgent Autonomy: intent suppressed — minimum gap not elapsed");
+        return;
+      }
+      // v0.9.18: тихий гард — сразу после живого диалога инициатива не
+      // вклинивается (иначе агент «отвечает второй раз» вслед за своим ответом).
+      if (
+        state.lastUserMessageAt > 0 &&
+        Date.now() - state.lastUserMessageAt < minUserSilenceMs
+      ) {
+        logger.info("BrainAgent Autonomy: intent suppressed — user spoke recently (quiet guard)");
         return;
       }
     }

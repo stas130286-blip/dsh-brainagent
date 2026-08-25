@@ -11,6 +11,7 @@ import {
   type AutonomousDelivererDeps,
 } from "./autonomy.ts";
 import { AUTONOMY_MEMORIES_PREFIX } from "../modules/autonomy-markers.ts";
+import { AUTONOMY_PRIORITY_PREFIX } from "./config.ts";
 import { DEFAULT_CONFIG } from "../modules/types.ts";
 
 const MEMORIES = [
@@ -22,12 +23,13 @@ const MEMORIES = [
 
 const TAGGED = "<autonomous-intent>\nПоделись мыслью.\n</autonomous-intent>";
 
-function makeDeps(state = createAutonomyState()) {
+function makeDeps(state = createAutonomyState(), minUserSilenceMs = 0) {
   const delivered: string[] = [];
   const deps: AutonomousDelivererDeps = {
     state,
     brainConfig: DEFAULT_CONFIG,
     minGapMs: 0,
+    minUserSilenceMs,
     logger: { info: () => {}, warn: () => {} },
     pickAgent: () => ({ id: "agent-1" }) as never,
     deliver: (_agent, framed) => {
@@ -84,5 +86,31 @@ describe("v0.9.1: <autonomy-memories> не доставляется соло", (
     deliver(TAGGED);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]).not.toContain(AUTONOMY_MEMORIES_PREFIX);
+  });
+});
+
+describe("v0.9.18: тихий гард — инициатива не вклинивается после диалога", () => {
+  it("интент подавляется, если пользователь только что говорил", () => {
+    const state = createAutonomyState();
+    state.lastUserMessageAt = Date.now();
+    const { delivered, deliver } = makeDeps(state, 3 * 60 * 1000);
+    deliver(TAGGED);
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("интент доставляется, если пользователь молчит дольше гарда", () => {
+    const state = createAutonomyState();
+    state.lastUserMessageAt = Date.now() - 4 * 60 * 1000;
+    const { delivered, deliver } = makeDeps(state, 3 * 60 * 1000);
+    deliver(TAGGED);
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("напоминание по времени (priority) обходит тихий гард", () => {
+    const state = createAutonomyState();
+    state.lastUserMessageAt = Date.now();
+    const { delivered, deliver } = makeDeps(state, 3 * 60 * 1000);
+    deliver(AUTONOMY_PRIORITY_PREFIX + TAGGED);
+    expect(delivered).toHaveLength(1);
   });
 });

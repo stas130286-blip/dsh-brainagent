@@ -115,6 +115,8 @@ export interface Config {
   };
   /** Minimum gap between proactive (autonomous) messages, ms. */
   autonomousMinGapMs: number;
+  /** Minimum user silence before proactive messages, ms (v0.9.18). */
+  autonomousUserSilenceMs: number;
   /**
    * Единый конфиг (m6): прямая проекция внутреннего BrainAgentConfig.
    * Любая секция (vitalImpulse, memory, dmn, ...) мержится поверх
@@ -183,6 +185,9 @@ export const Config: Schema<Config> = Schema.object({
   autonomousMinGapMs: Schema.number()
     .default(10 * 60 * 1000)
     .description("Minimum gap between proactive (autonomous) messages, ms"),
+  autonomousUserSilenceMs: Schema.number()
+    .default(3 * 60 * 1000)
+    .description("Minimum user silence before proactive (autonomous) messages, ms"),
   // m6: любая секция внутреннего BrainAgentConfig без дублирования схемы.
   brain: Schema.any().description(
     "Internal BrainAgentConfig overrides (memory, vitalImpulse, dmn, ...) deep-merged over defaults",
