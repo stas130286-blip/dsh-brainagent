@@ -46,6 +46,14 @@ export const AUTONOMOUS_FRAME_PREFIX: string = AUTONOMOUS_FRAMING_LINES[0];
 export const AUTONOMY_MEMORIES_PREFIX = "<autonomy-memories>";
 
 /**
+ * Префикс приоритетной доставки (v0.9.7): напоминания по time-целям —
+ * обязательства по времени, а не спонтанная инициатива. Deliverer
+ * снимает маркер и пропускает такую доставку мимо loop-breaker
+ * и минимума-гэпа проактивных сообщений.
+ */
+export const AUTONOMY_PRIORITY_PREFIX = "<autonomy-priority>";
+
+/**
  * Единая детекция автономного ввода: ровный тег, тег с атрибутами
  * или фрейминг доставки перед тегом.
  */

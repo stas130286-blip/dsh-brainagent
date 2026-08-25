@@ -361,6 +361,7 @@ export {
   AUTONOMOUS_TAG_PREFIX,
   AUTONOMOUS_FRAME_PREFIX,
   AUTONOMOUS_FRAMING_LINES,
+  AUTONOMY_PRIORITY_PREFIX,
   isAutonomousInput,
 } from "../modules/autonomy-markers.ts";
 

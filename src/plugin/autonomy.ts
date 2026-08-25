@@ -23,7 +23,12 @@ import type {
   Goal,
   MessageDomain,
 } from "../modules/types.ts";
-import { AUTONOMOUS_FRAMING_LINES, AUTONOMOUS_TAG, AUTONOMOUS_TAG_PREFIX } from "./config.ts";
+import {
+  AUTONOMOUS_FRAMING_LINES,
+  AUTONOMOUS_TAG,
+  AUTONOMOUS_TAG_PREFIX,
+  AUTONOMY_PRIORITY_PREFIX,
+} from "./config.ts";
 import { AUTONOMY_MEMORIES_PREFIX } from "../modules/autonomy-markers.ts";
 
 // ── Shared mutable state ────────────────────────────────────────────
@@ -224,21 +229,34 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
       return;
     }
 
+    // v0.9.7: напоминание по time-цели — обязательство по времени,
+    // а не спонтанная инициатива: снимаем маркер и пропускаем мимо
+    // loop-breaker и минимума-гэпа (иначе обещанное напоминание
+    // подавляется недавней проактивной доставкой).
+    let priority = false;
+    let intentText = trimmed;
+    if (trimmed.startsWith(AUTONOMY_PRIORITY_PREFIX)) {
+      priority = true;
+      intentText = trimmed.slice(AUTONOMY_PRIORITY_PREFIX.length).trim();
+    }
+
     // Loop breaker: after an autonomous turn the agent stays silent until
     // the human returns — otherwise the turn's own learning signals keep
     // re-firing the impulse and the chat fills with cron soliloquies.
-    if (state.previousCycleWasAutonomous) {
-      logger.info("BrainAgent Autonomy: intent suppressed — previous cycle was autonomous");
-      return;
-    }
-    // Minimum gap between proactive messages (default 10 min).
-    if (Date.now() - state.lastAutonomousDeliveryAt < minGapMs) {
-      logger.info("BrainAgent Autonomy: intent suppressed — minimum gap not elapsed");
-      return;
+    if (!priority) {
+      if (state.previousCycleWasAutonomous) {
+        logger.info("BrainAgent Autonomy: intent suppressed — previous cycle was autonomous");
+        return;
+      }
+      // Minimum gap between proactive messages (default 10 min).
+      if (Date.now() - state.lastAutonomousDeliveryAt < minGapMs) {
+        logger.info("BrainAgent Autonomy: intent suppressed — minimum gap not elapsed");
+        return;
+      }
     }
     // «Не зашло»: темы, которые пользователь отверг, не заводим (v0.2.0).
     if (brainConfig.modules.proactiveFeedback) {
-      const intentDomain = deps.classifyDomain(trimmed).domain;
+      const intentDomain = deps.classifyDomain(intentText).domain;
       if (deps.isDomainSuppressed(intentDomain)) {
         logger.info(
           `BrainAgent Autonomy: intent suppressed — domain ${intentDomain} was rejected`,
@@ -260,7 +278,7 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
     // Скопленный блок памяти вливается в доставку и очищается.
     const memoryContext = state.pendingMemoryContext;
     state.pendingMemoryContext = undefined;
-    const framed = trimmed.startsWith(AUTONOMOUS_TAG_PREFIX)
+    const framed = intentText.startsWith(AUTONOMOUS_TAG_PREFIX)
       ? [
           ...AUTONOMOUS_FRAMING_LINES,
           ...(rejectionHints.length > 0
@@ -320,9 +338,12 @@ export function createAutonomousIntentResolver(deps: IntentResolverDeps): () => 
         if (triggered.length > 0) {
           const goalCtx = deps.goalStack.buildGoalContext(triggered);
           if (goalCtx) {
+            // v0.9.7: time-цель — напоминание с приоритетной доставкой.
+            const priority = triggered.some((g) => g.trigger.type === "time");
             state.lastAutonomousSource = `goal:${triggered[0].id}`;
             return {
               text: [
+                ...(priority ? [AUTONOMY_PRIORITY_PREFIX] : []),
                 AUTONOMOUS_TAG,
                 ...triggered.slice(0, 3).map((g) => g.description),
                 "",

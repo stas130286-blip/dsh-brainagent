@@ -104,6 +104,7 @@ import { initMasteryDrive, stopMasteryDrive, getMasteryDriveStats, getMasteryAgg
 import { initDriveArbiter, stopDriveArbiter, getDriveArbiterStats } from "./modules/drive-arbiter.ts";
 import { initVitalImpulse, stopVitalImpulse, resetConsecutiveFires, getVitalImpulseStats } from "./modules/vital-impulse.ts";
 import { initGoalExecutor, stopGoalExecutor } from "./modules/goal-executor.ts";
+import { startGoalReminderScheduler, createGoalRoundGuard } from "./modules/goal-reminder.ts";
 import { initAutonomyEnricher, stopAutonomyEnricher } from "./modules/autonomy-enricher.ts";
 import { initAutonomousResearch, stopAutonomousResearch, getAutonomousResearchStats } from "./modules/autonomous-research.ts";
 import { startDreamMode, stopDreamMode } from "./modules/dream-mode.ts";
@@ -388,6 +389,22 @@ export function apply(ctx: Context, config: Config) {
     initGoalExecutor(brainConfig, logger);
   }
 
+  // v0.9.7: фоновый планировщик time-напоминаний. Vital Impulse без
+  // сигналов не загорается, поэтому обещанные напоминания в тишине
+  // не звонили — теперь time-цели проверяются отдельным таймером.
+  let stopGoalReminder: (() => void) | undefined;
+  if (brainConfig.modules.goalStack) {
+    stopGoalReminder = startGoalReminderScheduler({
+      checkAutonomousGoals,
+      buildGoalContext,
+      enqueue: (text) => enqueueAutonomousIntent(text),
+      logger,
+    });
+  }
+  // Хост без патча пейсинга (host-patches/) спамит гол-раундами —
+  // предупреждаем один раз, чтобы пользователь знал причину.
+  const notifyGoalRound = createGoalRoundGuard((msg) => logger.warn(msg));
+
   // Autonomy Enricher: memory-driven motivation enrichment.
   if (brainConfig.modules.actionDispatcher && brainConfig.modules.vitalImpulse) {
     initAutonomyEnricher(brainConfig, logger, {
@@ -604,6 +621,8 @@ export function apply(ctx: Context, config: Config) {
     const key = String(_session.id);
 
     if (event.type === "user/message") {
+      // v0.9.7: детекция спама гол-раундов хоста без патча пейсинга.
+      notifyGoalRound(event.data.source);
       // v0.9.3: user/message на поверхности модели — это и прямые
       // реплики человека, и синтетические инъекции хоста
       // (runtime-context снапшоты system-prompt, каталог скиллов,
@@ -838,6 +857,7 @@ export function apply(ctx: Context, config: Config) {
       if (brainConfig.circadian.enabled) stopCircadianRhythm();
       if (brainConfig.modules.vitalImpulse) stopVitalImpulse();
       if (brainConfig.modules.goalStack) stopGoalExecutor();
+      stopGoalReminder?.();
       if (brainConfig.modules.socialDrive) stopSocialDrive();
       if (brainConfig.modules.cognitiveHunger) stopCognitiveHunger();
       if (brainConfig.modules.creativeDrive) stopCreativeDrive();
