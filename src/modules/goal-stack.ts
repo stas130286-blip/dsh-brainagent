@@ -936,6 +936,35 @@ export function parseTimeTriggerCondition(condition: string): number | undefined
   const minSane = Date.UTC(2000, 0, 1);
   const asNumber = Number(trimmed);
   if (Number.isFinite(asNumber) && asNumber >= minSane) return asNumber;
+  // Запасной европейский формат «DD.MM.YYYY[, HH:MM[:SS]]»: боевой
+  // тест показал, что LLM иногда отдаёт его вместо ISO.
+  const dotMatch = trimmed.match(
+    /^(\d{2})\.(\d{2})\.(\d{4})(?:[, T]+(\d{2}):(\d{2})(?::(\d{2}))?)?$/,
+  );
+  if (dotMatch) {
+    const [, dd, mm, yyyy, hh = "0", mi = "0", ss = "0"] = dotMatch;
+    const local = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      Number(hh),
+      Number(mi),
+      Number(ss),
+    );
+    // Round-trip защита: Date молча превращает «31.02.2026» в 3 марта,
+    // а «25:00» — в следующий день.
+    if (
+      local.getDate() !== Number(dd) ||
+      local.getMonth() !== Number(mm) - 1 ||
+      local.getHours() !== Number(hh) ||
+      local.getMinutes() !== Number(mi) ||
+      local.getSeconds() !== Number(ss)
+    ) {
+      return undefined;
+    }
+    const asDate = local.getTime();
+    return Number.isNaN(asDate) || asDate < minSane ? undefined : asDate;
+  }
   // Date.parse всеяден — принимаем только явный ISO-вид
   // «YYYY-MM-DD[THH:MM]», который просим у LLM в промпте.
   if (!/^\d{4}-\d{2}(-\d{2})?([T ]\d.*)?$/.test(trimmed)) return undefined;

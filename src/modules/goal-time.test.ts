@@ -38,3 +38,22 @@ describe("parseTimeTriggerCondition (v0.9.5)", () => {
     expect(parseTimeTriggerCondition("1999-12-31T23:59")).toBeUndefined();
   });
 });
+
+describe("parseTimeTriggerCondition: европейский формат (v0.9.6)", () => {
+  it("парсит DD.MM.YYYY с временем (боевой кейс LLM)", () => {
+    const expected = new Date(2026, 7, 26, 9, 0, 0).getTime();
+    expect(parseTimeTriggerCondition("26.08.2026, 09:00:00")).toBe(expected);
+  });
+
+  it("парсит DD.MM.YYYY без времени как начало дня", () => {
+    expect(parseTimeTriggerCondition("26.08.2026")).toBe(
+      new Date(2026, 7, 26, 0, 0, 0).getTime(),
+    );
+  });
+
+  it("отклоняет несуществующие даты и время (rollover-защита)", () => {
+    expect(parseTimeTriggerCondition("31.02.2026")).toBeUndefined();
+    expect(parseTimeTriggerCondition("26.08.2026, 25:00")).toBeUndefined();
+    expect(parseTimeTriggerCondition("01.13.2026")).toBeUndefined();
+  });
+});
