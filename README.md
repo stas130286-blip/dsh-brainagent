@@ -69,7 +69,18 @@ npx @deepseek-ai/dsh plugin --profile web add github:stas130286-blip/dsh-brainag
 npx @deepseek-ai/dsh web
 ```
 
-> Пакет содержит готовый собранный модуль (`lib/index.js`) — установка с GitHub не требует ни сборки, ни разрешений на скрипты.
+> Пакет содержит готовый собранный модуль (`lib/index.js`) и **не содержит install-скриптов**.
+>
+> ⚠️ **Про pnpm ≥ 10**: по политике безопасности pnpm по умолчанию блокирует *любые* git-пакеты, поэтому вместо чистого завершения вы можете увидеть `ERR_PNPM_IGNORED_BUILDS`. Это общая для всех git-плагинов dsh политика pnpm (см. [обсуждение #2230](https://github.com/deepseek-ai/deepseek-harness/discussions/2230)), а не ошибка установки: файлы плагина уже развёрнуты, `npx @deepseek-ai/dsh web` будет работать.
+>
+> Чтобы установка завершалась без предупреждения, скопируйте точный ключ из текста ошибки в `~/.dsh/profiles/web/pnpm-workspace.yaml` и повторите команду:
+>
+> ```yaml
+> allowBuilds:
+>   dsh-brainagent@https://codeload.github.com/stas130286-blip/dsh-brainagent/tar.gz/<хеш-коммита>: true
+> ```
+>
+> Разрешение безопасно: у пакета нет скриптов, которым это разрешение что-либо позволяет выполнять.
 
 ### Вариант 2: из локальной копии (для разработки)
 
@@ -221,7 +232,18 @@ git clone https://github.com/stas130286-blip/dsh-brainagent.git
 npx @deepseek-ai/dsh plugin --profile web add ./dsh-brainagent
 ```
 
-Ships a prebuilt bundle (`lib/index.js`) — git installs need no build step and no script permissions.
+Ships a prebuilt bundle (`lib/index.js`) and **contains no install scripts**.
+
+> ⚠️ **About pnpm ≥ 10**: pnpm's security policy blocks *any* git-hosted package by default, so instead of a clean exit you may see `ERR_PNPM_IGNORED_BUILDS`. This is pnpm policy common to all git-installed dsh plugins (see [discussion #2230](https://github.com/deepseek-ai/deepseek-harness/discussions/2230)), not an install failure — the plugin files are already in place and `npx @deepseek-ai/dsh web` will work.
+>
+> For a warning-free install, copy the exact key from the error message into `~/.dsh/profiles/web/pnpm-workspace.yaml` and re-run the command:
+>
+> ```yaml
+> allowBuilds:
+>   dsh-brainagent@https://codeload.github.com/stas130286-blip/dsh-brainagent/tar.gz/<commit-hash>: true
+> ```
+>
+> Approving is safe: the package has no scripts the permission would ever run.
 
 **Commands**: `/brain status`, `/brain memory <query>`, `/brain goals`, `/brain neuro`, `/brain habits`, `/brain learning`, `/brain circadian`, `/brain dream` and more
 
