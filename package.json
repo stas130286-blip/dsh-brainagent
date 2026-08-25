@@ -6,6 +6,7 @@
   "main": "lib/index.js",
   "files": [
     "lib/index.js",
+    "host-patches",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
