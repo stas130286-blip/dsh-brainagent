@@ -11,8 +11,9 @@
  *   get a recall bonus when current emotional state matches
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import { bus } from "./event-bus.ts";
 import { callLLM, isAIProviderAvailable } from "./llm-client.ts";
@@ -238,10 +239,9 @@ export function createEmotionalMemory(
   function persistState(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "state.json"),
         JSON.stringify({ ...state, qualiaHistory }, null, 2),
-        "utf-8",
       );
     } catch {
       /* non-critical */

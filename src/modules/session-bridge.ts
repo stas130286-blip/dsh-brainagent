@@ -7,8 +7,9 @@
  * summary into the prompt for seamless continuity.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type {
   AmygdalaAssessment,
@@ -118,10 +119,9 @@ export function createSessionBridge(
   function persistCurrent(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "current.json"),
         JSON.stringify(currentSession, null, 2),
-        "utf-8",
       );
     } catch {
       /* non-critical */
@@ -131,7 +131,7 @@ export function createSessionBridge(
   function persistLast(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(join(storageDir, "last.json"), JSON.stringify(lastSession, null, 2), "utf-8");
+      atomicWrite(join(storageDir, "last.json"), JSON.stringify(lastSession, null, 2));
     } catch {
       /* non-critical */
     }

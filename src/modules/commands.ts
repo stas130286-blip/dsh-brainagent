@@ -792,7 +792,10 @@ export function createCommandRegistry(): CommandRegistryInstance {
         if (args === "impulse" || args === "vital-impulse") {
           if (!vitalImpulseStatsGetter) return { text: "Vital Impulse: module not loaded" };
           const vi = vitalImpulseStatsGetter();
-          const pressurePct = (vi.currentPressure / vi.effectiveThreshold) * 100;
+          const pressurePct =
+            vi.effectiveThreshold > 0
+              ? (vi.currentPressure / vi.effectiveThreshold) * 100
+              : 0;
           const bar =
             "█".repeat(Math.min(20, Math.round(pressurePct / 5))) +
             "░".repeat(Math.max(0, 20 - Math.round(pressurePct / 5)));

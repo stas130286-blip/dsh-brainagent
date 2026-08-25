@@ -17,7 +17,7 @@
  * Таймеры unref'ятся, чтобы не держать процесс Node открытым.
  */
 
-import { renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 export const DEFAULT_PERSIST_DEBOUNCE_MS = 500;
 
@@ -28,19 +28,49 @@ type PendingWrite = {
 
 const pendingWrites = new Map<string, PendingWrite>();
 
-/** Атомарная запись: сначала во временный файл, затем rename. */
+/**
+ * Общая точка записи: ошибки диска не критичны и молча глотаются —
+ * следующее изменение состояния попробует записаться снова.
+ */
+function persistNow(filePath: string, serialize: () => string): void {
+  try {
+    atomicWrite(filePath, serialize());
+  } catch {
+    // Некритичная ошибка диска — попробуем в следующий раз
+  }
+}
+
+/**
+ * Атомарная запись: сначала во временный файл, затем rename.
+ * Ошибки диска пробрасываются наверх — обработка (логирование и
+ * отказ от ретрая) остаётся на усмотрение вызывающего, как в
+ * schedulePersist/flushPersist.
+ */
 export function atomicWrite(filePath: string, data: string): void {
   const tmpPath = `${filePath}.tmp`;
-  writeFileSyncSafe(tmpPath, data);
-  renameSyncSafe(tmpPath, filePath);
+  writeFileSync(tmpPath, data, "utf-8");
+  renameSync(tmpPath, filePath);
 }
 
-function writeFileSyncSafe(path: string, data: string): void {
-  writeFileSync(path, data, "utf-8");
+/**
+ * Прочитать JSON-файл с фолбэком на дефолт: отсутствующий файл или
+ * повреждённый/невалидный JSON молча возвращает fallback — ровно та
+ * семантика, которую раньше дублировали локальные loadState в пяти
+ * модулях (hippocampus, emotional-memory, mirror-neurons, working-memory,
+ * attention-gate).
+ */
+export function loadJsonFile<T>(filePath: string, fallback: T): T {
+  try {
+    if (!existsSync(filePath)) return fallback;
+    return JSON.parse(readFileSync(filePath, "utf-8")) as T;
+  } catch {
+    return fallback;
+  }
 }
 
-function renameSyncSafe(from: string, to: string): void {
-  renameSync(from, to);
+/** Атомарная запись JSON: tmp-файл + rename через atomicWrite. */
+export function saveJsonFile(filePath: string, data: unknown): void {
+  atomicWrite(filePath, JSON.stringify(data, null, 2));
 }
 
 /**
@@ -57,11 +87,7 @@ export function schedulePersist(
 
   const timer = setTimeout(() => {
     pendingWrites.delete(filePath);
-    try {
-      atomicWrite(filePath, serialize());
-    } catch {
-      // Некритичная ошибка диска — попробуем в следующий раз
-    }
+    persistNow(filePath, serialize);
   }, delayMs);
   timer.unref?.();
 
@@ -74,11 +100,7 @@ export function flushPersist(filePath: string): void {
   if (!entry) return;
   clearTimeout(entry.timer);
   pendingWrites.delete(filePath);
-  try {
-    atomicWrite(filePath, entry.serialize());
-  } catch {
-    // Некритичная ошибка
-  }
+  persistNow(filePath, entry.serialize);
 }
 
 /** Отменить отложенную запись без записи на диск (для init*). */

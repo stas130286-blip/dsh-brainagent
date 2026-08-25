@@ -19,8 +19,9 @@
  * of modules into a true cognitive architecture.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { reinforce as reinforceHabit } from "./basal-ganglia.ts";
 import { markNovelty } from "./dopamine-system.ts";
 import { bus } from "./event-bus.ts";
@@ -380,10 +381,9 @@ export function createNeuralPathways(
    */
   function saveSynapticState(): void {
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "weights.json"),
         JSON.stringify(synapticState, null, 2),
-        "utf-8",
       );
     } catch {
       /* non-critical */

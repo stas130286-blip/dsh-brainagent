@@ -20,8 +20,9 @@
  * system needs to change strategy.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type {
   BrainAgentConfig,
@@ -147,7 +148,7 @@ export function createLearningCoordinator(
       for (const [key, val] of moduleMetrics) {
         metricsObj[key] = val;
       }
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "coordinator.json"),
         JSON.stringify(
           {
@@ -161,7 +162,6 @@ export function createLearningCoordinator(
           null,
           2,
         ),
-        "utf-8",
       );
     } catch {
       /* non-critical */

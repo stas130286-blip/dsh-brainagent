@@ -11,8 +11,9 @@
  * свободные функции — тонкие обёртки над слотом активного инстанса.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig, KnowledgeGap, MessageDomain } from "./types.ts";
 
@@ -83,14 +84,13 @@ export function createCuriosityDrive(
   function persistState(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "state.json"),
         JSON.stringify(
           { gaps: gaps.slice(-maxGaps * 2), totalDetected, questionsGenerated, gapsFilled },
           null,
           2,
         ),
-        "utf-8",
       );
     } catch {
       /* non-critical */

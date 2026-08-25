@@ -171,6 +171,20 @@ export function apply(ctx: Context, config: Config) {
   const dataDir = config.dataDir;
   mkdirSync(dataDir, { recursive: true });
 
+  /**
+   * Возвращает геттер только когда модуль включён — компактная замена
+   * повторяющегося `brainConfig.modules.X ? getter : undefined`.
+   */
+  const optional = <T>(enabled: boolean | undefined, getter: T | undefined): T | undefined =>
+    enabled ? getter : undefined;
+
+  /**
+   * Симметричный teardown: каждый init-блок регистрирует свой stop здесь,
+   * финальный cleanup вызывает стопперы в обратном порядке. Больше нет
+   * гигантского if-каскада в конце apply() — init и stop живут рядом.
+   */
+  const disposers: Array<() => void> = [];
+
   const hostConfig = (): HostConfig =>
     buildHostConfig({
       providers: config.providers,
@@ -238,10 +252,10 @@ export function apply(ctx: Context, config: Config) {
   });
 
   const driveGetters = (): DriveGetters => ({
-    social: brainConfig.modules.socialDrive ? getSocialDriveStats : undefined,
-    cognitive: brainConfig.modules.cognitiveHunger ? getCognitiveHungerStats : undefined,
-    creative: brainConfig.modules.creativeDrive ? getCreativeDriveStats : undefined,
-    mastery: brainConfig.modules.masteryDrive ? getMasteryDriveStats : undefined,
+    social: optional(brainConfig.modules.socialDrive, getSocialDriveStats),
+    cognitive: optional(brainConfig.modules.cognitiveHunger, getCognitiveHungerStats),
+    creative: optional(brainConfig.modules.creativeDrive, getCreativeDriveStats),
+    mastery: optional(brainConfig.modules.masteryDrive, getMasteryDriveStats),
   });
 
   const resolveAutonomousIntent = createAutonomousIntentResolver({
@@ -356,6 +370,7 @@ export function apply(ctx: Context, config: Config) {
         }
       },
     });
+    disposers.push(stopSocialDrive);
   }
   if (brainConfig.modules.cognitiveHunger) {
     initCognitiveHunger(dataDir, brainConfig, logger, {
@@ -366,6 +381,7 @@ export function apply(ctx: Context, config: Config) {
         }
       },
     });
+    disposers.push(stopCognitiveHunger);
   }
   if (brainConfig.modules.creativeDrive) {
     initCreativeDrive(dataDir, brainConfig, logger, {
@@ -376,6 +392,7 @@ export function apply(ctx: Context, config: Config) {
         }
       },
     });
+    disposers.push(stopCreativeDrive);
   }
   if (brainConfig.modules.masteryDrive) {
     initMasteryDrive(dataDir, brainConfig, logger, {
@@ -386,6 +403,7 @@ export function apply(ctx: Context, config: Config) {
         }
       },
     });
+    disposers.push(stopMasteryDrive);
   }
 
   if (brainConfig.modules.vitalImpulse) {
@@ -396,24 +414,26 @@ export function apply(ctx: Context, config: Config) {
       enqueueSystemEvent: (text) => enqueueAutonomousIntent(text),
       resolveAutonomousIntent,
     });
+    disposers.push(stopVitalImpulse);
   }
 
   // Goal Executor: closes the autonomy loop (goals fire without user input).
   if (brainConfig.modules.goalStack) {
     initGoalExecutor(brainConfig, logger);
+    disposers.push(stopGoalExecutor);
   }
 
   // v0.9.7: фоновый планировщик time-напоминаний. Vital Impulse без
   // сигналов не загорается, поэтому обещанные напоминания в тишине
   // не звонили — теперь time-цели проверяются отдельным таймером.
-  let stopGoalReminder: (() => void) | undefined;
   if (brainConfig.modules.goalStack) {
-    stopGoalReminder = startGoalReminderScheduler({
+    const stopGoalReminder = startGoalReminderScheduler({
       checkAutonomousGoals,
       buildGoalContext,
       enqueue: (text) => enqueueAutonomousIntent(text),
       logger,
     });
+    disposers.push(() => stopGoalReminder());
   }
   // Хост без патча пейсинга (host-patches/) спамит гол-раундами —
   // предупреждаем один раз, чтобы пользователь знал причину.
@@ -423,9 +443,8 @@ export function apply(ctx: Context, config: Config) {
   // нет: armed-цель хоста получает раунд на каждый переход агента в idle.
   // Троттлим публичными швами (событие inbox + сервис целей), не трогая
   // файлы хоста. Окно: DSH_GOAL_ROUND_MIN_IDLE_MS, 0 = выключить.
-  let stopGoalRoundPacer: (() => void) | undefined;
   if (brainConfig.modules.goalStack) {
-    stopGoalRoundPacer = startGoalRoundPacer({
+    const stopGoalRoundPacer = startGoalRoundPacer({
       onInserted: (handler) =>
         (ctx.on as unknown as (event: string, fn: typeof handler) => unknown)(
           "agent/inbox/inserted",
@@ -437,6 +456,7 @@ export function apply(ctx: Context, config: Config) {
           | undefined,
       logger,
     });
+    disposers.push(() => stopGoalRoundPacer?.());
   }
 
   // Autonomy Enricher: memory-driven motivation enrichment.
@@ -449,6 +469,7 @@ export function apply(ctx: Context, config: Config) {
       getDesires,
       enqueueSystemEvent: (text) => enqueueAutonomousIntent(text),
     });
+    disposers.push(stopAutonomyEnricher);
   }
 
   // Drive Arbiter: intelligent arbitration between competing drives.
@@ -457,19 +478,19 @@ export function apply(ctx: Context, config: Config) {
       dataDir,
       brainConfig,
       {
-        getSocialDriveStats: brainConfig.modules.socialDrive ? getSocialDriveStats : undefined,
-        getCognitiveHungerStats: brainConfig.modules.cognitiveHunger
-          ? getCognitiveHungerStats
-          : undefined,
-        getCreativeDriveStats: brainConfig.modules.creativeDrive
-          ? getCreativeDriveStats
-          : undefined,
-        getMasteryDriveStats: brainConfig.modules.masteryDrive ? getMasteryDriveStats : undefined,
-        getUserModel: brainConfig.modules.mirrorNeurons ? () => getUserModel("default") : undefined,
+        getSocialDriveStats: optional(brainConfig.modules.socialDrive, getSocialDriveStats),
+        getCognitiveHungerStats: optional(
+          brainConfig.modules.cognitiveHunger,
+          getCognitiveHungerStats,
+        ),
+        getCreativeDriveStats: optional(brainConfig.modules.creativeDrive, getCreativeDriveStats),
+        getMasteryDriveStats: optional(brainConfig.modules.masteryDrive, getMasteryDriveStats),
+        getUserModel: optional(brainConfig.modules.mirrorNeurons, () => getUserModel("default")),
         getInteroceptivePattern: () => getInteroceptiveState()?.pattern ?? null,
       },
       logger,
     );
+    disposers.push(stopDriveArbiter);
   }
 
   // Autonomous Research: isolated web research pipeline.
@@ -484,16 +505,19 @@ export function apply(ctx: Context, config: Config) {
       gatewayConfig: hostConfig(),
       logger,
     });
+    disposers.push(stopAutonomousResearch);
   }
 
   // Circadian rhythm: sleep-wake cycles.
   if (brainConfig.circadian.enabled) {
     initCircadianRhythm(dataDir, brainConfig, logger);
+    disposers.push(stopCircadianRhythm);
   }
 
   // Dream Mode: background memory consolidation (own interval timer).
   if (brainConfig.modules.dreamMode) {
     startDreamMode(brainConfig, logger, hostConfig());
+    disposers.push(stopDreamMode);
   }
 
   // ── Phase 4: service & consciousness layers ─────────────────
@@ -511,14 +535,17 @@ export function apply(ctx: Context, config: Config) {
   // Proactive Feedback: обучение на «не зашло» для автономных сообщений.
   if (brainConfig.modules.proactiveFeedback) {
     initProactiveFeedback(dataDir, brainConfig, logger);
+    disposers.push(stopProactiveFeedback);
   }
 
   // Learning loop (RL-lite): журнал наград и бандит выбора стратегий.
   if (brainConfig.learningLoop.rewardLedger.enabled) {
     initRewardLedger(dataDir, brainConfig);
+    disposers.push(stopRewardLedger);
   }
   if (brainConfig.learningLoop.strategyBandit.enabled) {
     initStrategyBandit(dataDir, brainConfig);
+    disposers.push(stopStrategyBandit);
   }
 
   if (brainConfig.modules.introspection) {
@@ -535,6 +562,7 @@ export function apply(ctx: Context, config: Config) {
   }
   if (brainConfig.modules.temporalAwareness) {
     initTemporalAwareness(dataDir, brainConfig, logger);
+    disposers.push(stopTemporalAwareness);
   }
 
   // Interoception: holistic inner-state sensing. Subscribes to the
@@ -542,21 +570,22 @@ export function apply(ctx: Context, config: Config) {
   if (brainConfig.modules.interoception) {
     initInteroception(
       {
-        getSocialDriveStats: brainConfig.modules.socialDrive ? getSocialDriveStats : undefined,
-        getCognitiveHungerStats: brainConfig.modules.cognitiveHunger
-          ? getCognitiveHungerStats
-          : undefined,
-        getCreativeDriveStats: brainConfig.modules.creativeDrive
-          ? getCreativeDriveStats
-          : undefined,
-        getMasteryDriveStats: brainConfig.modules.masteryDrive ? getMasteryDriveStats : undefined,
-        getVitalImpulseStats: brainConfig.modules.vitalImpulse ? getVitalImpulseStats : undefined,
-        getNeuromodulatorState: brainConfig.modules.neuromodulatorSystem
-          ? getNeuromodulatorState
-          : undefined,
+        getSocialDriveStats: optional(brainConfig.modules.socialDrive, getSocialDriveStats),
+        getCognitiveHungerStats: optional(
+          brainConfig.modules.cognitiveHunger,
+          getCognitiveHungerStats,
+        ),
+        getCreativeDriveStats: optional(brainConfig.modules.creativeDrive, getCreativeDriveStats),
+        getMasteryDriveStats: optional(brainConfig.modules.masteryDrive, getMasteryDriveStats),
+        getVitalImpulseStats: optional(brainConfig.modules.vitalImpulse, getVitalImpulseStats),
+        getNeuromodulatorState: optional(
+          brainConfig.modules.neuromodulatorSystem,
+          getNeuromodulatorState,
+        ),
       },
       logger,
     );
+    disposers.push(stopInteroception);
   }
 
   // Thalamic Gate: activation-threshold stats. In dsh there are no
@@ -564,33 +593,33 @@ export function apply(ctx: Context, config: Config) {
   // always passes — so the gate is initialized for diagnostics only.
   if (brainConfig.modules.thalamicGate) {
     initThalamicGate(brainConfig.thalamicGate, {
-      getVitalImpulseStats: brainConfig.modules.vitalImpulse ? getVitalImpulseStats : undefined,
+      getVitalImpulseStats: optional(brainConfig.modules.vitalImpulse, getVitalImpulseStats),
       getAmygdalaAssessment: () => {
         const last = [...cycles.values()].at(-1);
         return last?.assessment;
       },
-      getNeuromodulatorState: brainConfig.modules.neuromodulatorSystem
-        ? getNeuromodulatorState
-        : undefined,
-      getSocialDriveSatiation: brainConfig.modules.socialDrive
-        ? getSocialDriveSatiation
-        : undefined,
-      getCognitiveHungerSatiation: brainConfig.modules.cognitiveHunger
-        ? getCognitiveHungerSatiation
-        : undefined,
-      getCreativeDriveSatiation: brainConfig.modules.creativeDrive
-        ? getCreativeDriveSatiation
-        : undefined,
-      getMasteryDriveSatiation: brainConfig.modules.masteryDrive
-        ? getMasteryAggregateSatiation
-        : undefined,
-      getGoalStackStats: brainConfig.modules.goalStack ? getGoalStackStats : undefined,
-      getDMNStats: brainConfig.modules.dmn
-        ? () => {
-            const unused = getRecentUnusedInsights(30 * 60 * 1000);
-            return { unusedInsightCount: unused.length };
-          }
-        : undefined,
+      getNeuromodulatorState: optional(
+        brainConfig.modules.neuromodulatorSystem,
+        getNeuromodulatorState,
+      ),
+      getSocialDriveSatiation: optional(brainConfig.modules.socialDrive, getSocialDriveSatiation),
+      getCognitiveHungerSatiation: optional(
+        brainConfig.modules.cognitiveHunger,
+        getCognitiveHungerSatiation,
+      ),
+      getCreativeDriveSatiation: optional(
+        brainConfig.modules.creativeDrive,
+        getCreativeDriveSatiation,
+      ),
+      getMasteryDriveSatiation: optional(
+        brainConfig.modules.masteryDrive,
+        getMasteryAggregateSatiation,
+      ),
+      getGoalStackStats: optional(brainConfig.modules.goalStack, getGoalStackStats),
+      getDMNStats: optional(brainConfig.modules.dmn, () => {
+        const unused = getRecentUnusedInsights(30 * 60 * 1000);
+        return { unusedInsightCount: unused.length };
+      }),
     });
   }
 
@@ -619,31 +648,30 @@ export function apply(ctx: Context, config: Config) {
       brainConfig,
     );
     setCommandStatGetters({
-      workingMemory: brainConfig.modules.workingMemory ? getWorkingMemoryStats : undefined,
-      sessionBridge: brainConfig.modules.sessionBridge ? getSessionBridgeStats : undefined,
-      attention: brainConfig.modules.attentionGate ? getAttentionStats : undefined,
-      dmn: brainConfig.modules.dmn ? getDMNStats : undefined,
-      introspectionTrace: brainConfig.modules.introspection ? getLastTrace : undefined,
-      introspectionStats: brainConfig.modules.introspection ? getIntrospectionStats : undefined,
-      identity: brainConfig.modules.agentIdentity ? getAgentIdentityStats : undefined,
-      goalStack: brainConfig.modules.goalStack ? getGoalStackStats : undefined,
-      curiosity: brainConfig.modules.curiosityDrive ? getCuriosityStats : undefined,
-      temporalBinding: brainConfig.modules.temporalBinding ? getTemporalBindingStats : undefined,
-      qualiaSimulator: brainConfig.modules.qualiaSimulator ? getQualiaSimulatorStats : undefined,
-      vitalImpulse: brainConfig.modules.vitalImpulse ? getVitalImpulseStats : undefined,
-      goalExecutor: brainConfig.modules.goalStack ? getGoalExecutorStats : undefined,
-      socialDrive: brainConfig.modules.socialDrive ? getSocialDriveStats : undefined,
-      cognitiveHunger: brainConfig.modules.cognitiveHunger ? getCognitiveHungerStats : undefined,
-      creativeDrive: brainConfig.modules.creativeDrive ? getCreativeDriveStats : undefined,
-      masteryDrive: brainConfig.modules.masteryDrive ? getMasteryDriveStats : undefined,
-      driveArbiter: brainConfig.modules.driveArbiter ? getDriveArbiterStats : undefined,
-      temporalAwareness: brainConfig.modules.temporalAwareness
-        ? getTemporalAwarenessStats
-        : undefined,
-      thalamicGate: brainConfig.modules.thalamicGate ? getThalamicGateStats : undefined,
-      autonomousResearch: brainConfig.modules.autonomousResearch
-        ? getAutonomousResearchStats
-        : undefined,
+      workingMemory: optional(brainConfig.modules.workingMemory, getWorkingMemoryStats),
+      sessionBridge: optional(brainConfig.modules.sessionBridge, getSessionBridgeStats),
+      attention: optional(brainConfig.modules.attentionGate, getAttentionStats),
+      dmn: optional(brainConfig.modules.dmn, getDMNStats),
+      introspectionTrace: optional(brainConfig.modules.introspection, getLastTrace),
+      introspectionStats: optional(brainConfig.modules.introspection, getIntrospectionStats),
+      identity: optional(brainConfig.modules.agentIdentity, getAgentIdentityStats),
+      goalStack: optional(brainConfig.modules.goalStack, getGoalStackStats),
+      curiosity: optional(brainConfig.modules.curiosityDrive, getCuriosityStats),
+      temporalBinding: optional(brainConfig.modules.temporalBinding, getTemporalBindingStats),
+      qualiaSimulator: optional(brainConfig.modules.qualiaSimulator, getQualiaSimulatorStats),
+      vitalImpulse: optional(brainConfig.modules.vitalImpulse, getVitalImpulseStats),
+      goalExecutor: optional(brainConfig.modules.goalStack, getGoalExecutorStats),
+      socialDrive: optional(brainConfig.modules.socialDrive, getSocialDriveStats),
+      cognitiveHunger: optional(brainConfig.modules.cognitiveHunger, getCognitiveHungerStats),
+      creativeDrive: optional(brainConfig.modules.creativeDrive, getCreativeDriveStats),
+      masteryDrive: optional(brainConfig.modules.masteryDrive, getMasteryDriveStats),
+      driveArbiter: optional(brainConfig.modules.driveArbiter, getDriveArbiterStats),
+      temporalAwareness: optional(brainConfig.modules.temporalAwareness, getTemporalAwarenessStats),
+      thalamicGate: optional(brainConfig.modules.thalamicGate, getThalamicGateStats),
+      autonomousResearch: optional(
+        brainConfig.modules.autonomousResearch,
+        getAutonomousResearchStats,
+      ),
     });
   }
 
@@ -887,24 +915,8 @@ export function apply(ctx: Context, config: Config) {
       clearInterval(metricsInterval);
       metrics.stop();
       for (const unsub of unsubs) unsub();
-      if (brainConfig.modules.dreamMode) stopDreamMode();
-      if (brainConfig.circadian.enabled) stopCircadianRhythm();
-      if (brainConfig.modules.vitalImpulse) stopVitalImpulse();
-      if (brainConfig.modules.goalStack) stopGoalExecutor();
-      stopGoalReminder?.();
-      stopGoalRoundPacer?.();
-      if (brainConfig.modules.socialDrive) stopSocialDrive();
-      if (brainConfig.modules.cognitiveHunger) stopCognitiveHunger();
-      if (brainConfig.modules.creativeDrive) stopCreativeDrive();
-      if (brainConfig.modules.masteryDrive) stopMasteryDrive();
-      if (brainConfig.modules.actionDispatcher) stopAutonomyEnricher();
-      if (brainConfig.modules.driveArbiter) stopDriveArbiter();
-      if (brainConfig.modules.autonomousResearch) stopAutonomousResearch();
-      if (brainConfig.modules.interoception) stopInteroception();
-      if (brainConfig.modules.proactiveFeedback) stopProactiveFeedback();
-      if (brainConfig.learningLoop.rewardLedger.enabled) stopRewardLedger();
-      if (brainConfig.learningLoop.strategyBandit.enabled) stopStrategyBandit();
-      if (brainConfig.modules.temporalAwareness) stopTemporalAwareness();
+      // Симметричный teardown: стопперы зарегистрированы рядом с init.
+      for (const dispose of [...disposers].reverse()) dispose();
     };
   });
 

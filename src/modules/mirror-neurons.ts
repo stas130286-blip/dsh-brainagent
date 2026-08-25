@@ -17,8 +17,9 @@
  *    buildTheoryOfMindContext и др.), остались свободными функциями.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import { bus } from "./event-bus.ts";
 import { callLLM } from "./llm-client.ts";
@@ -82,7 +83,7 @@ export function createMirrorNeurons(workspaceDir: string): MirrorNeuronsInstance
     if (!storageDir) return;
     try {
       const data = Object.fromEntries(userModels);
-      writeFileSync(join(storageDir, "index.json"), JSON.stringify(data, null, 2), "utf-8");
+      atomicWrite(join(storageDir, "index.json"), JSON.stringify(data, null, 2));
     } catch {
       // Non-critical
     }

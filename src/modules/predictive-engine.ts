@@ -28,8 +28,9 @@
  *    (без персистентности), как раньше работали на состоянии по умолчанию.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import type { MessageDomain } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -136,20 +137,17 @@ export function createPredictiveEngine(workspaceDir: string): PredictiveEngineIn
   function persistAll(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "temporal.json"),
         JSON.stringify(Object.fromEntries(temporalPatterns), null, 2),
-        "utf-8",
       );
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "sequential.json"),
         JSON.stringify(Object.fromEntries(sequentialPatterns), null, 2),
-        "utf-8",
       );
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "contextual.json"),
         JSON.stringify(Object.fromEntries(contextualPatterns), null, 2),
-        "utf-8",
       );
     } catch {
       /* non-critical */

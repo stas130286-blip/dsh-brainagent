@@ -14,13 +14,17 @@ import type { BrainEventMap, BrainEventName } from "./types.ts";
 type Listener<K extends BrainEventName> = (data: BrainEventMap[K]) => void | Promise<void>;
 
 type ListenerEntry = {
-  event: BrainEventName;
   handler: Listener<BrainEventName>;
   priority: number;
 };
 
 class CorpusCallosum {
-  private listeners: ListenerEntry[] = [];
+  /**
+   * Слушатели сгруппированы по событию; внутри группы — упорядочены по
+   * убыванию приоритета (вставка в позицию, без полной сортировки на
+   * каждую подписку). emit больше не фильтрует весь реестр.
+   */
+  private listeners = new Map<BrainEventName, ListenerEntry[]>();
   private recentSignals = new Map<BrainEventName, { data: unknown; timestamp: number }>();
 
   /**
@@ -29,17 +33,25 @@ class CorpusCallosum {
    */
   on<K extends BrainEventName>(event: K, handler: Listener<K>, priority = 0): () => void {
     const entry: ListenerEntry = {
-      event,
       handler: handler as Listener<BrainEventName>,
       priority,
     };
-    this.listeners.push(entry);
-    this.listeners.sort((a, b) => b.priority - a.priority);
+    const group = this.listeners.get(event);
+    if (!group) {
+      this.listeners.set(event, [entry]);
+    } else {
+      const index = group.findIndex((existing) => existing.priority < priority);
+      if (index === -1) group.push(entry);
+      else group.splice(index, 0, entry);
+    }
 
     // Return unsubscribe function
     return () => {
-      const idx = this.listeners.indexOf(entry);
-      if (idx !== -1) this.listeners.splice(idx, 1);
+      const current = this.listeners.get(event);
+      if (!current) return;
+      const idx = current.indexOf(entry);
+      if (idx !== -1) current.splice(idx, 1);
+      if (current.length === 0) this.listeners.delete(event);
     };
   }
 
@@ -51,8 +63,7 @@ class CorpusCallosum {
     // Store for late-arriving modules that need the last state
     this.recentSignals.set(event, { data, timestamp: Date.now() });
 
-    const matching = this.listeners.filter((l) => l.event === event);
-
+    const matching = this.listeners.get(event) ?? [];
     await Promise.allSettled(matching.map((l) => Promise.resolve(l.handler(data))));
   }
 
@@ -62,8 +73,7 @@ class CorpusCallosum {
   emitSync<K extends BrainEventName>(event: K, data: BrainEventMap[K]): void {
     this.recentSignals.set(event, { data, timestamp: Date.now() });
 
-    for (const l of this.listeners) {
-      if (l.event !== event) continue;
+    for (const l of this.listeners.get(event) ?? []) {
       try {
         l.handler(data);
       } catch {

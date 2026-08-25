@@ -31,8 +31,9 @@
  *    detectReinforcementWithAI) остались свободными.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import { callLLM } from "./llm-client.ts";
 import { VectorIndex } from "./vector-engine.ts";
@@ -129,7 +130,7 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
   function persistHabits(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(join(storageDir, "habits.json"), JSON.stringify(habits, null, 2), "utf-8");
+      atomicWrite(join(storageDir, "habits.json"), JSON.stringify(habits, null, 2));
     } catch {
       /* non-critical */
     }

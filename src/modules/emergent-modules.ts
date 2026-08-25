@@ -20,8 +20,9 @@
  * памяти, диск не трогается) — ровно поведение модуля до init.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type {
   BrainAgentConfig,
@@ -117,8 +118,21 @@ export function createEmergentModules(
     try {
       const path = join(storageDir, "state.json");
       if (existsSync(path)) {
-        const data = JSON.parse(readFileSync(path, "utf-8")) as EmergentModulesState;
+        const data = JSON.parse(readFileSync(path, "utf-8")) as EmergentModulesState & {
+          patternHistory?: Array<{
+            participants: ModuleName[];
+            domain: string;
+            reward: number;
+            timestamp: number;
+          }>;
+        };
         state.modules = data.modules ?? [];
+        // История паттернов тоже персистится — иначе после рестарта
+        // deprecateUnusedModules видит пустую историю и демотирует все
+        // established-модули («забытые» открытия).
+        if (Array.isArray(data.patternHistory)) {
+          patternHistory = data.patternHistory.slice(-100);
+        }
       }
     } catch {
       // Fresh start
@@ -128,7 +142,11 @@ export function createEmergentModules(
   function saveState(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(join(storageDir, "state.json"), JSON.stringify(state, null, 2), "utf-8");
+      const persisted = {
+        ...state,
+        patternHistory: patternHistory.slice(-100),
+      };
+      atomicWrite(join(storageDir, "state.json"), JSON.stringify(persisted, null, 2));
     } catch {
       /* non-critical */
     }

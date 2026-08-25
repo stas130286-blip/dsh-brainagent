@@ -107,7 +107,8 @@ export function createSocialDrive(
   engine.addExtraListener(
     bus.on("amygdala:assessed", (data) => {
       if (data.empathyNeeded && data.emotionIntensity > 0.6) {
-        engine.applySatiationDelta(-(data.emotionIntensity * 0.04));
+        engine.evaluateDecay();
+        engine.applySatiationDelta(-(data.emotionIntensity * 0.04), { persist: true });
       }
     }),
   );

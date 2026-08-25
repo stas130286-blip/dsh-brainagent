@@ -14,10 +14,11 @@
  * без персистентности — ровно поведение модуля до init.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import { bus } from "./event-bus.ts";
+import { loadJsonFile, saveJsonFile } from "./persist.ts";
 import { callLLM, isAIProviderAvailable } from "./llm-client.ts";
 import type {
   BrainAgentConfig,
@@ -122,17 +123,16 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
   function loadState(): void {
     if (!storageDir) return;
     try {
-      const path = join(storageDir, "state.json");
-      if (existsSync(path)) {
-        const raw = JSON.parse(readFileSync(path, "utf-8"));
-        // Support both legacy (plain array) and new format (object with goals/desires/decisionLog)
-        if (Array.isArray(raw)) {
-          goals = raw;
-        } else {
-          goals = Array.isArray(raw.goals) ? raw.goals : [];
-          desires = Array.isArray(raw.desires) ? raw.desires : [];
-          decisionLog = Array.isArray(raw.decisionLog) ? raw.decisionLog : [];
-        }
+      const raw = loadJsonFile<unknown>(join(storageDir, "state.json"), undefined);
+      if (raw === undefined) return;
+      // Support both legacy (plain array) and new format (object with goals/desires/decisionLog)
+      if (Array.isArray(raw)) {
+        goals = raw;
+      } else {
+        const state = raw as { goals?: unknown; desires?: unknown; decisionLog?: unknown };
+        goals = Array.isArray(state.goals) ? state.goals : [];
+        desires = Array.isArray(state.desires) ? state.desires : [];
+        decisionLog = Array.isArray(state.decisionLog) ? state.decisionLog : [];
       }
     } catch {
       goals = [];
@@ -144,11 +144,7 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
   function persistState(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
-        join(storageDir, "state.json"),
-        JSON.stringify({ goals, desires, decisionLog }, null, 2),
-        "utf-8",
-      );
+      saveJsonFile(join(storageDir, "state.json"), { goals, desires, decisionLog });
     } catch {
       /* non-critical */
     }

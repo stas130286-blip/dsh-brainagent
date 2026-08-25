@@ -27,6 +27,60 @@ export type DeepPartial<T> = {
         : T[K];
 };
 
+/**
+ * Единый реестр флагов модулей — единственный источник истины для
+ * интерфейса Config, Schema-полей и дефолтов. Раньше три списка
+ * (интерфейс, Schema.object, .default) дублировались вручную и могли
+ * разойтись; теперь тип и схема генерируются из этого массива.
+ */
+const MODULE_FLAGS = [
+  { key: "thalamus" },
+  { key: "amygdala" },
+  { key: "hippocampus" },
+  { key: "prefrontalCortex" },
+  { key: "cerebellum" },
+  { key: "workingMemory" },
+  { key: "attentionGate" },
+  { key: "mirrorNeurons", description: "Empathy: user model & style learning" },
+  { key: "predictiveEngine", description: "Interaction pattern anticipation" },
+  { key: "basalGanglia", description: "Habit formation & reinforcement" },
+  { key: "neuromodulatorSystem", description: "Dopamine reward distribution" },
+  { key: "learningCoordinator", description: "Meta-cognitive learning stats" },
+  { key: "neuralPathways", description: "Cross-module co-activation pathways" },
+  { key: "structuralPlasticity", description: "Dynamic pathway creation/pruning" },
+  { key: "emotionalMemory", description: "Flashbulb emotional tagging" },
+  { key: "semanticExtraction", description: "Fact extraction at turn end" },
+  { key: "proceduralExtraction", description: "Workflow extraction at turn end" },
+  { key: "aiEnrichment", description: "LLM-powered enrichment (ctx.llm with env fallback)" },
+  { key: "sessionBridge", description: "Cross-session continuity summaries" },
+  { key: "dmn", description: "Default Mode Network — idle background thinking" },
+  { key: "goalStack", description: "Proactive goals, desires & volition" },
+  { key: "curiosityDrive", description: "Knowledge-gap curiosity exploration" },
+  { key: "vitalImpulse", description: "Proactive impulse pressure & firing" },
+  { key: "socialDrive", description: "Biological social homeostasis drive" },
+  { key: "cognitiveHunger", description: "Learning/knowledge hunger drive" },
+  { key: "creativeDrive", description: "Creative expression drive" },
+  { key: "masteryDrive", description: "Skill mastery drive" },
+  { key: "driveArbiter", description: "Arbitration between competing drives" },
+  { key: "autonomyEnricher", description: "Memory-driven autonomy enrichment" },
+  { key: "autonomousResearch", description: "Isolated web research pipeline" },
+  { key: "dreamMode", description: "Background memory consolidation" },
+  { key: "introspection", description: "Processing traces & confidence self-assessment" },
+  { key: "agentIdentity", description: "Per-domain self-knowledge & autobiographical memory" },
+  { key: "temporalBinding", description: "Consciousness moment stream" },
+  { key: "qualiaSimulator", description: "Subjective experience simulation" },
+  { key: "temporalAwareness", description: "Subjective sense of time passing" },
+  { key: "thalamicGate", description: "Neural activation threshold stats" },
+  { key: "metabolicBudget", description: "Metabolic budget — energy-based resource allocation" },
+  { key: "emergentModules", description: "Emergent modules — recurring co-activation patterns" },
+  { key: "interoception", description: "Interoception — holistic inner-state sensing" },
+  { key: "proactiveFeedback", description: "Proactive feedback — learning from rejected proactive messages" },
+  { key: "commands", description: "/brain diagnostics command" },
+] as const;
+
+export type ModuleFlagName = (typeof MODULE_FLAGS)[number]["key"];
+export type ModuleFlags = { [K in ModuleFlagName]: boolean };
+
 export interface Config {
   /** Where BrainAgent persists its memory stores. */
   dataDir: string;
@@ -35,54 +89,7 @@ export interface Config {
   /** Explicit provider credentials (otherwise read from env vars). */
   providers: Record<string, { apiKey?: string; baseUrl?: string }>;
   /** Cognitive module flags. */
-  modules: {
-    thalamus: boolean;
-    amygdala: boolean;
-    hippocampus: boolean;
-    prefrontalCortex: boolean;
-    cerebellum: boolean;
-    workingMemory: boolean;
-    attentionGate: boolean;
-    mirrorNeurons: boolean;
-    predictiveEngine: boolean;
-    basalGanglia: boolean;
-    neuromodulatorSystem: boolean;
-    learningCoordinator: boolean;
-    neuralPathways: boolean;
-    structuralPlasticity: boolean;
-    emotionalMemory: boolean;
-    semanticExtraction: boolean;
-    proceduralExtraction: boolean;
-    aiEnrichment: boolean;
-    sessionBridge: boolean;
-    dmn: boolean;
-    goalStack: boolean;
-    curiosityDrive: boolean;
-    vitalImpulse: boolean;
-    socialDrive: boolean;
-    cognitiveHunger: boolean;
-    creativeDrive: boolean;
-    masteryDrive: boolean;
-    driveArbiter: boolean;
-    autonomyEnricher: boolean;
-    autonomousResearch: boolean;
-    dreamMode: boolean;
-    introspection: boolean;
-    agentIdentity: boolean;
-    temporalBinding: boolean;
-    qualiaSimulator: boolean;
-    temporalAwareness: boolean;
-    thalamicGate: boolean;
-    /** Metabolic Budget (energy-based resource allocation) */
-    metabolicBudget: boolean;
-    /** Emergent Modules (recurring co-activation patterns) */
-    emergentModules: boolean;
-    /** Interoception (holistic inner-state sensing) */
-    interoception: boolean;
-    /** Proactive Feedback (обучение на «не зашло») */
-    proactiveFeedback: boolean;
-    commands: boolean;
-  };
+  modules: ModuleFlags;
   /** Circadian rhythm (sleep-wake cycles). */
   circadian: { enabled: boolean };
   /** Dual-process model routing (System 1 / System 2). */
@@ -117,6 +124,22 @@ export interface Config {
   brain?: DeepPartial<BrainAgentConfig>;
 }
 
+/** Схема флагов модулей, сгенерированная из единого реестра MODULE_FLAGS. */
+function moduleFlagsSchema(): Schema<ModuleFlags> {
+  type FlagSchema = ReturnType<typeof Schema.boolean>;
+  const fields: Record<ModuleFlagName, FlagSchema> = {} as Record<ModuleFlagName, FlagSchema>;
+  for (const flag of MODULE_FLAGS) {
+    const field = Schema.boolean().default(true);
+    fields[flag.key] = "description" in flag ? field.description(flag.description) : field;
+  }
+  // Каст неизбежен: schemastery выводит точный объектный тип только из
+  // литерала полей; генерация из реестра даёт Record-тип. Семантика полей
+  // (boolean + default(true)) идентична прежнему рукописному литералу.
+  return Schema.object(fields as Record<string, FlagSchema>).default(
+    Object.fromEntries(MODULE_FLAGS.map((flag) => [flag.key, true])),
+  ) as unknown as Schema<ModuleFlags>;
+}
+
 export const Config: Schema<Config> = Schema.object({
   dataDir: Schema.string().default(join(homedir(), ".brainagent")),
   model: Schema.string().description("Model for internal LLM enrichment (provider/model form)"),
@@ -126,93 +149,7 @@ export const Config: Schema<Config> = Schema.object({
       baseUrl: Schema.string(),
     }),
   ).default({}),
-  modules: Schema.object({
-    thalamus: Schema.boolean().default(true),
-    amygdala: Schema.boolean().default(true),
-    hippocampus: Schema.boolean().default(true),
-    prefrontalCortex: Schema.boolean().default(true),
-    cerebellum: Schema.boolean().default(true),
-    workingMemory: Schema.boolean().default(true),
-    attentionGate: Schema.boolean().default(true),
-    mirrorNeurons: Schema.boolean().default(true).description("Empathy: user model & style learning"),
-    predictiveEngine: Schema.boolean().default(true).description("Interaction pattern anticipation"),
-    basalGanglia: Schema.boolean().default(true).description("Habit formation & reinforcement"),
-    neuromodulatorSystem: Schema.boolean().default(true).description("Dopamine reward distribution"),
-    learningCoordinator: Schema.boolean().default(true).description("Meta-cognitive learning stats"),
-    neuralPathways: Schema.boolean().default(true).description("Cross-module co-activation pathways"),
-    structuralPlasticity: Schema.boolean().default(true).description("Dynamic pathway creation/pruning"),
-    emotionalMemory: Schema.boolean().default(true).description("Flashbulb emotional tagging"),
-    semanticExtraction: Schema.boolean().default(true).description("Fact extraction at turn end"),
-    proceduralExtraction: Schema.boolean().default(true).description("Workflow extraction at turn end"),
-    aiEnrichment: Schema.boolean().default(true).description("LLM-powered enrichment (ctx.llm with env fallback)"),
-    sessionBridge: Schema.boolean().default(true).description("Cross-session continuity summaries"),
-    dmn: Schema.boolean().default(true).description("Default Mode Network — idle background thinking"),
-    goalStack: Schema.boolean().default(true).description("Proactive goals, desires & volition"),
-    curiosityDrive: Schema.boolean().default(true).description("Knowledge-gap curiosity exploration"),
-    vitalImpulse: Schema.boolean().default(true).description("Proactive impulse pressure & firing"),
-    socialDrive: Schema.boolean().default(true).description("Biological social homeostasis drive"),
-    cognitiveHunger: Schema.boolean().default(true).description("Learning/knowledge hunger drive"),
-    creativeDrive: Schema.boolean().default(true).description("Creative expression drive"),
-    masteryDrive: Schema.boolean().default(true).description("Skill mastery drive"),
-    driveArbiter: Schema.boolean().default(true).description("Arbitration between competing drives"),
-    autonomyEnricher: Schema.boolean().default(true).description("Memory-driven autonomy enrichment"),
-    autonomousResearch: Schema.boolean().default(true).description("Isolated web research pipeline"),
-    dreamMode: Schema.boolean().default(true).description("Background memory consolidation"),
-    introspection: Schema.boolean().default(true).description("Processing traces & confidence self-assessment"),
-    agentIdentity: Schema.boolean().default(true).description("Per-domain self-knowledge & autobiographical memory"),
-    temporalBinding: Schema.boolean().default(true).description("Consciousness moment stream"),
-    qualiaSimulator: Schema.boolean().default(true).description("Subjective experience simulation"),
-    temporalAwareness: Schema.boolean().default(true).description("Subjective sense of time passing"),
-    thalamicGate: Schema.boolean().default(true).description("Neural activation threshold stats"),
-    metabolicBudget: Schema.boolean().default(true).description("Metabolic budget — energy-based resource allocation"),
-    emergentModules: Schema.boolean().default(true).description("Emergent modules — recurring co-activation patterns"),
-    interoception: Schema.boolean().default(true).description("Interoception — holistic inner-state sensing"),
-    proactiveFeedback: Schema.boolean().default(true).description("Proactive feedback — learning from rejected proactive messages"),
-    commands: Schema.boolean().default(true).description("/brain diagnostics command"),
-  }).default({
-    thalamus: true,
-    amygdala: true,
-    hippocampus: true,
-    prefrontalCortex: true,
-    cerebellum: true,
-    workingMemory: true,
-    attentionGate: true,
-    mirrorNeurons: true,
-    predictiveEngine: true,
-    basalGanglia: true,
-    neuromodulatorSystem: true,
-    learningCoordinator: true,
-    neuralPathways: true,
-    structuralPlasticity: true,
-    emotionalMemory: true,
-    semanticExtraction: true,
-    proceduralExtraction: true,
-    aiEnrichment: true,
-    sessionBridge: true,
-    dmn: true,
-    goalStack: true,
-    curiosityDrive: true,
-    vitalImpulse: true,
-    socialDrive: true,
-    cognitiveHunger: true,
-    creativeDrive: true,
-    masteryDrive: true,
-    driveArbiter: true,
-    autonomyEnricher: true,
-    autonomousResearch: true,
-    dreamMode: true,
-    introspection: true,
-    agentIdentity: true,
-    temporalBinding: true,
-    qualiaSimulator: true,
-    temporalAwareness: true,
-    thalamicGate: true,
-    metabolicBudget: true,
-    emergentModules: true,
-    interoception: true,
-    proactiveFeedback: true,
-    commands: true,
-  }),
+  modules: moduleFlagsSchema(),
   circadian: Schema.object({
     enabled: Schema.boolean().default(true).description("Sleep-wake cycle simulation"),
   }).default({ enabled: true }),
@@ -333,8 +270,11 @@ export function mergeBrainConfig(config: Config): BrainAgentConfig {
  * массивы и примитивы заменяются целиком. null/undefined не затирают
  * базовые значения.
  */
-function deepMergeConfig<T extends Record<string, any>>(base: T, override: Record<string, any>): T {
-  const result: Record<string, any> = { ...base };
+function deepMergeConfig<T extends Record<string, unknown>>(
+  base: T,
+  override: Record<string, unknown>,
+): T {
+  const result: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(override)) {
     if (value === undefined || value === null) continue;
     const prev = result[key];
@@ -345,7 +285,10 @@ function deepMergeConfig<T extends Record<string, any>>(base: T, override: Recor
       prev !== null &&
       !Array.isArray(prev)
     ) {
-      result[key] = deepMergeConfig(prev, value);
+      result[key] = deepMergeConfig(
+        prev as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
     } else {
       result[key] = value;
     }

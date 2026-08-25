@@ -217,6 +217,7 @@ export function createDriveArbiter(
     // Single drive — no conflict, just select it
     if (drives.length === 1) {
       selectDrive(drives[0].id, drives[0].need, false);
+      persistState();
       return;
     }
 
@@ -376,6 +377,10 @@ export function createDriveArbiter(
     // Clamp between 0.3 and 2.0 to prevent extreme values
     const newWeight = Math.max(0.3, Math.min(2.0, currentWeight + lr * signal.reward));
     driveWeights[lastSelectedDrive] = newWeight;
+
+    // Выученные веса — ценность reward-обучения; без персиста они
+    // терялись бы при завершении до следующего арбитража.
+    persistState();
 
     logger?.info(
       `BrainAgent DriveArbiter: reward learning drive=${lastSelectedDrive} ` +

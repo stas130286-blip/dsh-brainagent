@@ -329,8 +329,10 @@ export class DriveEngine {
     if (this.currentNeedLevel === "urgent") {
       this.emitDriveEvent(`${this.spec.id}:urge`, {
         satiation: this.satiation,
+        // До первого взаимодействия время «с последнего контакта» = 0,
+        // а не эпоха: иначе payload уносит ~1.7e12 мс («≈486 000ч»).
         [this.spec.urgeTimeField]:
-          this.lastInteractionTime > 0 ? now - this.lastInteractionTime : now,
+          this.lastInteractionTime > 0 ? now - this.lastInteractionTime : 0,
       });
       this.logger.info(`BrainAgent ${this.spec.logName}: URGENT urge emitted!`);
     }

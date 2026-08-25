@@ -20,8 +20,9 @@
  * No fixed timers — evaluation happens on each interaction.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig } from "./types.ts";
 
@@ -93,10 +94,9 @@ export function createTemporalAwareness(
         typicalGapMs,
         totalInteractions,
       };
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "temporal-awareness.json"),
         JSON.stringify(data, null, 2),
-        "utf-8",
       );
     } catch {
       // Non-critical

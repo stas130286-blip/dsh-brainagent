@@ -18,8 +18,9 @@
  *  - module-level `let` остался один — слот активного инстанса.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig, ContextTier } from "./types.ts";
 import { VectorIndex } from "./vector-engine.ts";
@@ -77,10 +78,9 @@ export function createAttentionGate(workspaceDir: string): AttentionGateInstance
   function persistState(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "state.json"),
         JSON.stringify({ totalProcessed, totalDropped, totalRelevanceSum }, null, 2),
-        "utf-8",
       );
     } catch {
       /* non-critical */

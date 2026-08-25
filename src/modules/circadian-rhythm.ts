@@ -29,8 +29,9 @@
  * - Minimum durations prevent rapid cycling
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig, CircadianPhase, CircadianState } from "./types.ts";
 
@@ -141,7 +142,7 @@ export function createCircadianRhythm(
 
   function persistState(): void {
     try {
-      writeFileSync(join(storageDir, "state.json"), JSON.stringify(state, null, 2), "utf-8");
+      atomicWrite(join(storageDir, "state.json"), JSON.stringify(state, null, 2));
     } catch {
       /* non-critical */
     }

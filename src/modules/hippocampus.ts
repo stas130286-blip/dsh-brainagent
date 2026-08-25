@@ -18,7 +18,7 @@
  * Retrieval: TF-IDF vector search + recency weighting + salience scoring
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import {
@@ -35,7 +35,7 @@ import type {
   SemanticMemory,
 } from "./types.ts";
 import { VectorIndex } from "./vector-engine.ts";
-import { atomicWrite } from "./persist.ts";
+import { atomicWrite, loadJsonFile, saveJsonFile } from "./persist.ts";
 
 // ── Pure helpers (module-level, stateless) ──────────────────────────
 
@@ -46,19 +46,14 @@ function ensureDir(dir: string): void {
 }
 
 function loadJson<T>(filePath: string, fallback: T): T {
-  try {
-    if (existsSync(filePath)) {
-      return JSON.parse(readFileSync(filePath, "utf-8")) as T;
-    }
-  } catch {
-    // Corrupted file — start fresh
-  }
-  return fallback;
+  return loadJsonFile(filePath, fallback);
 }
 
 function saveJson(filePath: string, data: unknown): void {
   try {
-    writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    // Атомарная запись (tmp + rename): обрыв процесса больше не
+    // оставляет битый store.json, который loadJson сбросил бы в [].
+    saveJsonFile(filePath, data);
   } catch {
     // Disk write failure — log but don't crash
   }
@@ -304,11 +299,12 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
   function loadEmbeddingCache(layer: string, cache: Map<string, number[]>): void {
     try {
       const filePath = join(embeddingsCacheDir, `${layer}.json`);
-      if (existsSync(filePath)) {
-        const data = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, number[]>;
-        for (const [id, vec] of Object.entries(data)) {
-          cache.set(id, vec);
-        }
+      const data = loadJsonFile<Record<string, unknown>>(filePath, {});
+      for (const [id, vec] of Object.entries(data)) {
+        // Валидация формы: мусорный вектор (не массив чисел) дал бы
+        // NaN-косинусы во всех реколлах этого слоя.
+        if (!Array.isArray(vec) || !vec.every((n) => typeof n === "number")) continue;
+        cache.set(id, vec);
       }
     } catch {
       // Corrupted cache — start fresh

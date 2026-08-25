@@ -129,7 +129,7 @@ export function createCreativeDrive(
   // Сгенерирован вопрос любопытства — лёгкий дренаж (вопрос = незакрытый гештальт)
   engine.addExtraListener(
     bus.on("curiosity:question-generated", () => {
-      engine.applySatiationDelta(-0.02);
+      engine.applySatiationDelta(-0.02, { persist: true });
     }),
   );
 

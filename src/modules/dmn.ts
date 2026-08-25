@@ -10,8 +10,9 @@
  * свободные функции — тонкие обёртки над слотом активного инстанса.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import { getFactsByCategory, storeFact } from "./hippocampus.ts";
 import type { BrainAgentConfig, BackgroundThought, DMNInsight } from "./types.ts";
@@ -92,7 +93,7 @@ export function createDMN(
   function persistState(): void {
     if (!storageDir) return;
     try {
-      writeFileSync(
+      atomicWrite(
         join(storageDir, "state.json"),
         JSON.stringify(
           {
@@ -104,7 +105,6 @@ export function createDMN(
           null,
           2,
         ),
-        "utf-8",
       );
     } catch {
       /* non-critical */

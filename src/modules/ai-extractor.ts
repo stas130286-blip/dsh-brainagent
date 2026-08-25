@@ -117,7 +117,9 @@ function parseFactsFromResponse(content: string): AIExtractedFact[] {
             ? parseFloat(confidence)
             : 0.7;
 
-      if (conf < 0.5 || conf > 1.0) continue;
+      // NaN проходит оба сравнения (NaN < 0.5 и NaN > 1.0 — ложь) и
+      // попадал бы в память как «уверенность NaN» — проверяем конечность.
+      if (!Number.isFinite(conf) || conf < 0.5 || conf > 1.0) continue;
 
       facts.push({
         content: factContent,

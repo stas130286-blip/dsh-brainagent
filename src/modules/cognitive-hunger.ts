@@ -136,6 +136,7 @@ export function createCognitiveHunger(
   // Новый факт сохранён в гиппокамп — микро-буст (любое запоминание = немного обучения)
   engine.addExtraListener(
     bus.on("hippocampus:stored", () => {
+      engine.evaluateDecay();
       engine.applySatiationDelta(0.02, { persist: true });
     }),
   );
@@ -146,7 +147,7 @@ export function createCognitiveHunger(
   engine.addExtraListener(
     bus.on("cerebellum:validated", (data) => {
       if (!data.passed) {
-        engine.applySatiationDelta(-0.03);
+        engine.applySatiationDelta(-0.03, { persist: true });
       }
     }),
   );

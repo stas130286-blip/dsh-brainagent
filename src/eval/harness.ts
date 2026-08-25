@@ -7,7 +7,7 @@
  * Каждый *.eval.ts-файл получает свежий процесс vitest и собственный
  * dataDir во временной папке, поэтому сценарии не отравляют друг друга.
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apply, Config } from "../index.ts";
@@ -141,6 +141,13 @@ export async function bootBrain(
       } catch {
         /* очистка не должна ронять сценарий */
       }
+    }
+    // Временный dataDir сценария больше не нужен — не копим каталоги
+    // в системном temp (раньше каждый boot оставлял свой).
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+    } catch {
+      /* не критично */
     }
   };
 
