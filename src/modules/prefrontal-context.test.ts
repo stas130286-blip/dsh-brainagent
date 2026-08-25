@@ -32,4 +32,10 @@ describe("assembleContext: анти-дубль напоминаний (v0.9.8)",
     expect(pos).toBeGreaterThan(start);
     expect(pos).toBeLessThan(end);
   });
+
+  it("разрешает выполнять действия инструментами по срабатыванию (v0.9.9)", () => {
+    const ctx = assembleContext(minimalState());
+    expect(ctx).toContain("When the reminder time arrives");
+    expect(ctx).toContain("including using your tools");
+  });
 });

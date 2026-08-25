@@ -134,6 +134,7 @@ export function assembleContext(state: BrainState): string {
     "## Reminders",
     "- If the user asks to be reminded about something later: your internal reminder clock is already tracking it. Just confirm briefly.",
     "- NEVER create your own timers, sleep commands, or background jobs for reminders — that duplicates the internal mechanism and the user receives the same reminder twice.",
+    "- When the reminder time arrives, you may fully perform whatever the user asked to be done at that time — including using your tools. Only the waiting is handled internally; the action itself is yours.",
     "",
     "Your internal state shapes HOW you respond, not WHAT you say about yourself.",
     "Respond naturally — as a person, not a system reporting its state.",
