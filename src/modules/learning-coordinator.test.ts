@@ -98,18 +98,19 @@ describe("Learning Coordinator", () => {
   describe("error tracking via cerebellum", () => {
     it("tracks errors from cerebellum validation events", () => {
       // Emit some reward first so the module is tracked
-      emitReward(["mirrorNeurons"], 0.5);
+      emitReward(["prefrontalCortex"], 0.5);
 
-      // Emit cerebellum validation with language issue
+      // v0.9.17: language issues are detection artifacts and no longer
+      // attributed; brevity issues still land on prefrontalCortex
       bus.emitSync("cerebellum:validated", {
         passed: false,
-        issues: ["Language mismatch detected"],
+        issues: ["Response seems too brief for a complex question."],
       });
 
       const stats = getLearningStats();
-      const mirror = stats.modulePerformance["mirrorNeurons"];
-      expect(mirror).toBeDefined();
-      expect(mirror.errorRate).toBeGreaterThan(0);
+      const pfc = stats.modulePerformance["prefrontalCortex"];
+      expect(pfc).toBeDefined();
+      expect(pfc.errorRate).toBeGreaterThan(0);
     });
   });
 

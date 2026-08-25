@@ -759,9 +759,11 @@ export function createLearningCoordinator(
 
 // ── Pure helpers (module-level) ─────────────────────────────────────
 
-function identifyImplicatedModule(issue: string): string | undefined {
+export function identifyImplicatedModule(issue: string): string | undefined {
   const lower = issue.toLowerCase();
-  if (lower.includes("language") || lower.includes("mismatch")) return "mirrorNeurons";
+  // v0.9.17: языковой несовпадение — артефакт детектора cerebellum,
+  // а не дефект модели пользователя; не штрафовать mirrorNeurons
+  if (lower.includes("language") || lower.includes("mismatch")) return undefined;
   if (lower.includes("brief") || lower.includes("verbose") || lower.includes("proportional"))
     return "prefrontalCortex";
   if (lower.includes("empathy") || lower.includes("tone")) return "amygdala";

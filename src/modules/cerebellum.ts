@@ -189,9 +189,17 @@ function checkLanguageConsistency(
   issues: string[],
   _suggestions: string[],
 ): void {
+  // v0.9.17: код, inline-код и ссылки исключаются из буквенной
+  // статистики — технические вставки давали ложные "Language mismatch"
+  // на русских ответах с английскими терминами и карточками
+  const prose = response
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/https?:\/\/\S+/g, " ");
+
   // Detect primary language of response
-  const cyrillicCount = (response.match(/[а-яА-ЯёЁ]/g) ?? []).length;
-  const latinCount = (response.match(/[a-zA-Z]/g) ?? []).length;
+  const cyrillicCount = (prose.match(/[а-яА-ЯёЁ]/g) ?? []).length;
+  const latinCount = (prose.match(/[a-zA-Z]/g) ?? []).length;
   const totalAlpha = cyrillicCount + latinCount;
 
   // v0.2.1: на коротких ответах язык не определяем — код, ссылки
@@ -199,8 +207,9 @@ function checkLanguageConsistency(
   if (totalAlpha < 40) return;
 
   const ratio = cyrillicCount / totalAlpha;
-  // Смешанный двуязычный текст — не mismatch
-  if (ratio > 0.35 && ratio < 0.65) return;
+  // v0.9.17: mismatch только при явном доминировании (>85% одной
+  // письменности); всё между 15% и 85% — смешанный двуязычный текст
+  if (ratio >= 0.15 && ratio <= 0.85) return;
 
   const responseLang = ratio > 0.5 ? "ru" : "en";
 
