@@ -24,6 +24,8 @@
  * Если у настроенного провайдера ключа нет — автоматический фолбэк на него.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import type { BrainAgentConfig } from "./types.ts";
 
@@ -162,6 +164,24 @@ function htmlToText(html: string): string {
       .replace(/\n{3,}/g, "\n\n")
       .trim()
   );
+}
+
+/**
+ * v0.9.23: ключ может жить не в окружении, а в credentials-сторе хоста
+ * (~/.dsh/.credentials.yaml, refs: DEEPSEEK_API_KEY). Читаем его оттуда
+ * как последний фолбэк — файл локальный, того же пользователя.
+ */
+function readDeepSeekKeyFromCredentialsStore(): string | null {
+  try {
+    const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
+    if (!home) return null;
+    const raw = readFileSync(join(home, ".dsh", ".credentials.yaml"), "utf-8");
+    const match = raw.match(/DEEPSEEK_API_KEY:\s*["']?([^"'\r\n]+)/);
+    const key = match?.[1]?.trim();
+    return key && key.length > 5 ? key : null;
+  } catch {
+    return null; // стора нет или не читается — тихо пропускаем
+  }
 }
 
 // ── Instance type ─────────────────────────────────────────────────
@@ -557,7 +577,8 @@ export function createAutonomousResearch(
         if (typeof dsCfg?.apiKey === "string" && dsCfg.apiKey.length > 5) return dsCfg.apiKey;
         const fromEnv = process.env.DEEPSEEK_API_KEY;
         if (fromEnv && fromEnv.length > 5) return fromEnv;
-        return null;
+        // Последний фолбэк: credentials-стор хоста (ключ тот же, что у чата)
+        return readDeepSeekKeyFromCredentialsStore();
       }
     }
   }

@@ -2,6 +2,9 @@
  * v0.9.23 — провайдер поиска через ключ DeepSeek и чистка детектора пробелов.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { initAutonomousResearch, executeResearch } from "./autonomous-research.ts";
 import { extractGapTopic } from "./curiosity-drive.ts";
 import { DEFAULT_CONFIG } from "./types.ts";
@@ -39,12 +42,17 @@ const ENV_KEYS = [
 ];
 let savedEnv: Record<string, string | undefined> = {};
 
+let savedUserProfile: string | undefined;
+
 beforeEach(() => {
   savedEnv = {};
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
   }
+  // изолируем фолбэк чтения ~/.dsh/.credentials.yaml от реальной машины
+  savedUserProfile = process.env.USERPROFILE;
+  process.env.USERPROFILE = join(mkdtempSync(join(tmpdir(), "v0923-nohome-")), "empty");
 });
 
 afterEach(() => {
@@ -52,6 +60,8 @@ afterEach(() => {
     if (savedEnv[k] === undefined) delete process.env[k];
     else process.env[k] = savedEnv[k];
   }
+  if (savedUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = savedUserProfile;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -144,6 +154,45 @@ describe("v0.9.23: DeepSeek search provider", () => {
 
     const result = await executeResearch("test topic");
     expect(result).toBeNull();
+  });
+
+  it("resolves DeepSeek key from the host credentials store fallback", async () => {
+    // фикстура: «дом» с credentials-стором, как у живого хоста
+    const fakeHome = mkdtempSync(join(tmpdir(), "v0923-home-"));
+    mkdirSync(join(fakeHome, ".dsh"));
+    writeFileSync(
+      join(fakeHome, ".dsh", ".credentials.yaml"),
+      "version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-store-fallback-key\n",
+    );
+    process.env.USERPROFILE = fakeHome;
+
+    const callLLM = vi
+      .fn()
+      .mockResolvedValueOnce('["store query"]')
+      .mockResolvedValueOnce('{"facts": [], "summary": "store summary"}');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          content: [
+            {
+              type: "web_search_tool_result",
+              content: [{ type: "web_search_result", url: "https://example.com/s" }],
+            },
+            { type: "text", text: "Answer." },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // gatewayConfig пуст: дефолтный "brave" без ключа → фолбэк на deepseek
+    setup({ enabled: true }, { callLLM, gatewayConfig: {} as never });
+
+    const result = await executeResearch("store topic");
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBe("store summary");
+    const url = fetchMock.mock.calls[0]?.[0] as string;
+    expect(url).toContain("/anthropic/v1/messages");
   });
 
   it("returns null when DeepSeek response has no search result blocks", async () => {
