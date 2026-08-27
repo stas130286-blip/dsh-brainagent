@@ -133,6 +133,17 @@ describe("v0.9.24: buildResearchInjection", () => {
     ).toBeUndefined();
   });
 
+  it("v0.9.25: instruction follows the tool gate state", () => {
+    // поиск разрешён в автономных ходах — запрет не выдаётся
+    const free = buildResearchInjection(makeResult(), { searchBlocked: false });
+    expect(free).toBeDefined();
+    expect(free).not.toContain("не вызывай");
+    expect(free).toContain("повторный поиск вызывай только если итогов недостаточно");
+    // поиск заблокирован (дефолт) — запрет на месте
+    const blocked = buildResearchInjection(makeResult(), { searchBlocked: true });
+    expect(blocked).toContain("не вызывай");
+  });
+
   it("builds a block even without summary if facts exist", () => {
     const block = buildResearchInjection(
       makeResult({ summary: "", facts: ["only fact"], factsStored: 1 }),

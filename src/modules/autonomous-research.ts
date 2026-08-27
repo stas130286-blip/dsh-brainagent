@@ -27,6 +27,8 @@
  * buildResearchInjection строит полный инъекционный блок (инструкция,
  * сводка, топ фактов) — боевой прогон показал, что одной сводки модели
  * недостаточно: она опиралась на общие знания, а не на найденные факты.
+ * v0.9.25: инструкция блока учитывает состояние гейта инструментов —
+ * запрет повторного поиска действует, только когда поиск заблокирован.
  */
 
 import { readFileSync } from "node:fs";
@@ -969,14 +971,21 @@ const RESEARCH_INJECTION_FACT_CHARS = 280;
  * только ошибку в логе.
  * Возвращает undefined, если встраивать в контекст нечего.
  */
-export function buildResearchInjection(result: ResearchResult): string | undefined {
+export function buildResearchInjection(
+  result: ResearchResult,
+  opts?: { searchBlocked?: boolean },
+): string | undefined {
   if (!result.summary && result.factsStored === 0) return undefined;
+  // v0.9.25: инструкция зависит от гейта. Если поиск в автономных ходах
+  // освобождён (конфиг), запрещать его повторный вызов было бы неверно.
+  const searchBlocked = opts?.searchBlocked ?? true;
 
   const lines: string[] = [
     "## Research Results (Autonomous Research Pipeline)",
     "",
-    "Инструкция: поиск уже выполнен изолированным конвейером — не вызывай",
-    "инструменты поиска (web_search, web_fetch) повторно в этом ходе.",
+    searchBlocked
+      ? "Инструкция: поиск уже выполнен изолированным конвейером — не вызывай инструменты поиска (web_search, web_fetch) повторно в этом ходе."
+      : "Инструкция: поиск уже выполнен изолированным конвейером; повторный поиск вызывай только если итогов недостаточно.",
     "Строя сообщение, опирайся прежде всего на факты ниже и не добавляй",
     "утверждений, выходящих за их пределы.",
   ];

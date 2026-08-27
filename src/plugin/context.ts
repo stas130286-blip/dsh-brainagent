@@ -176,7 +176,13 @@ export function createPreStepHandler(deps: PreStepDeps) {
         `BrainAgent AutonomousResearch: detected research intent (source=${state.lastAutonomousSource}), running isolated pipeline for "${topic}"`,
       );
       const result = await executeResearch(topic);
-      const researchBlock = result ? buildResearchInjection(result) : undefined;
+      // v0.9.25: инструкция блока должна совпадать с реальным гейтом:
+      // если поиск в автономных ходах освобождён, не запрещаем его.
+      const searchBlocked =
+        brainConfig.autonomousResearch.blockedToolsInAutonomous.includes("web_search");
+      const researchBlock = result
+        ? buildResearchInjection(result, { searchBlocked })
+        : undefined;
       if (researchBlock) {
         cyc.researchSummary = researchBlock;
         logger.info(
