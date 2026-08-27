@@ -329,10 +329,12 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
     }
 
     // ── Semantic memory: extract facts ──
-    // For autonomous cycles: extract from the agent's response text (not
-    // the internal prompt). For user cycles: extract from the input.
-    const semanticSource =
-      isAutonomousCycle && cycle.responseText.trim() ? cycle.responseText : input;
+    // v0.9.22: автономные циклы больше не учатся на собственных репликах.
+    // Раньше ответ агента на своё же напоминание («Стас, 3 минуты прошли…»)
+    // извлекался как факт категории definition — память отравлялась
+    // собственными словами. Эпизод «что я сказал» уже сохранён выше;
+    // семантические знания — только из реплик пользователя.
+    const semanticSource = isAutonomousCycle ? "" : input;
     if (
       config.modules.semanticExtraction &&
       semanticSource.length > 15 &&

@@ -53,6 +53,39 @@ describe("pinIdentityFacts (v0.9.12)", () => {
     expect(pinIdentityFacts(recalled, [])).toEqual(recalled);
     expect(pinIdentityFacts([], [])).toEqual([]);
   });
+
+  // v0.9.22: вызов из context.ts передаёт 3 user_info + 2 entity с
+  // лимитом 5 — факты-«имущество» (имя сервера и т.п.) должны
+  // закрепляться наравне с именем пользователя.
+  it("закрепляет и имя пользователя, и факты-имущество (3+2, лимит 5)", () => {
+    const userInfo = [
+      fact("u1", "Имя пользователя: Стас", 0.9),
+      fact("u2", "Пользователь живёт в России", 0.8),
+      fact("u3", "Пользователь собирает сервера", 0.7),
+    ];
+    const entity = [
+      { ...fact("e1", "Домашний сервер пользователя называется Атлас", 0.75), category: "entity" },
+      { ...fact("e2", "Кота пользователя зовут Барсик", 0.7), category: "entity" },
+    ];
+
+    const result = pinIdentityFacts([], [...userInfo, ...entity], 5);
+    expect(result.map((f) => f.id)).toEqual(["u1", "u2", "u3", "e1", "e2"]);
+  });
+
+  it("при лимите 5 шестой факт не закрепляется", () => {
+    const identity = [
+      fact("u1", "Ф1", 0.9),
+      fact("u2", "Ф2", 0.8),
+      fact("u3", "Ф3", 0.7),
+      { ...fact("e1", "Ф4", 0.6), category: "entity" },
+      { ...fact("e2", "Ф5", 0.5), category: "entity" },
+      { ...fact("e3", "Ф6", 0.4), category: "entity" },
+    ];
+
+    const result = pinIdentityFacts([], identity, 5);
+    expect(result).toHaveLength(5);
+    expect(result.map((f) => f.id)).not.toContain("e3");
+  });
 });
 
 // ── assembleContext: Memory Usage ───────────────────────────────────

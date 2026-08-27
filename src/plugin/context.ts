@@ -237,7 +237,14 @@ export function createPreStepHandler(deps: PreStepDeps) {
     // должны зависеть от релевантности запроса: вопрос «что ты знаешь
     // обо мне?» не может остаться без имени из-за лексического
     // fallback-а или пустого эмбеддинг-кэша.
-    recalled.semantic = pinIdentityFacts(recalled.semantic, getFactsByCategory("user_info", 3));
+    // v0.9.22: entity-факты (имя сервера, питомца и т.п. «собственность»
+    // пользователя) — такое же базовое знание, как и имя: боевой тест
+    // показал, что «Домашний сервер пользователя называется Атлас»
+    // лежит в сторе, но не доезжает до модели сквозь топ-5 по сходству.
+    recalled.semantic = pinIdentityFacts(recalled.semantic, [
+      ...getFactsByCategory("user_info", 3),
+      ...getFactsByCategory("entity", 2),
+    ], 5);
     cyc.recalledMemoryIds = [
       ...recalled.episodic.map((m) => m.id),
       ...recalled.semantic.map((m) => m.id),

@@ -33,7 +33,7 @@ export type DeepPartial<T> = {
  * (интерфейс, Schema.object, .default) дублировались вручную и могли
  * разойтись; теперь тип и схема генерируются из этого массива.
  */
-const MODULE_FLAGS = [
+export const MODULE_FLAGS = [
   { key: "thalamus" },
   { key: "amygdala" },
   { key: "hippocampus" },
