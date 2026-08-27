@@ -44,6 +44,7 @@ import { createMoment } from "../modules/temporal-binding.ts";
 import { recordCycleForSession } from "../modules/session-bridge.ts";
 import {
   detectKnowledgeGap,
+  extractGapTopic,
   markGapFilled,
   getOpenGaps,
 } from "../modules/curiosity-drive.ts";
@@ -588,7 +589,12 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
       // «Привет! Как дела?» становится «незакрытым вопросом» и поводом для инициативы.
       if (cycle.classification.complexity !== "trivial") {
         const recallSparse = cycle.recalledMemoryIds.length <= 1;
-        detectKnowledgeGap(input.slice(0, 100), cycle.classification.domain, recallSparse);
+        // v0.9.23: тема пробела — очищенная фраза, а не сырой ввод:
+        // приветствия и команды-напоминания пробелами знаний не являются.
+        const gapTopic = extractGapTopic(input);
+        if (gapTopic) {
+          detectKnowledgeGap(gapTopic, cycle.classification.domain, recallSparse);
+        }
       }
 
       if (brainConfig.modules.goalStack) {

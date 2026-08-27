@@ -186,11 +186,15 @@ describe("executeResearch", () => {
 
     const origEnv = process.env.BRAVE_API_KEY;
     delete process.env.BRAVE_API_KEY;
+    // v0.9.23: фолбэк на deepseek не должен срабатывать в этом тесте
+    const origDeepSeek = process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
 
     const result = await executeResearch("test topic");
     expect(result).toBeNull();
 
     if (origEnv) process.env.BRAVE_API_KEY = origEnv;
+    if (origDeepSeek) process.env.DEEPSEEK_API_KEY = origDeepSeek;
   });
 
   // ── Brave provider ─────────────────────────────────────────────

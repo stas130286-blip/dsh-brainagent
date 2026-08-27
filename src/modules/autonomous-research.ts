@@ -9,7 +9,7 @@
  * 5. Store: facts go to hippocampus via storeFact()
  * 6. Discard: raw web data never enters the main session
  *
- * Supports all search providers: brave, perplexity, grok, tavily.
+ * Supports all search providers: brave, perplexity, grok, tavily, deepseek.
  * The main session only sees a compact summary (~500 tokens).
  *
  * v0.7.0: фабрика createAutonomousResearch(cfg?, log?, deps?) — конфиг,
@@ -17,6 +17,11 @@
  * обёртки над общим ленивым инстансом. Без cfg/deps фабрика создаёт
  * detached-инстанс (executeResearch возвращает null) — ровно поведение
  * модуля до init.
+ *
+ * v0.9.23: провайдер "deepseek" — поиск через Anthropic-совместимый эндпоинт
+ * DeepSeek (/anthropic/v1/messages) со встроенным инструментом
+ * web_search_20250305; ключ тот же, что у чата (DEEPSEEK_API_KEY).
+ * Если у настроенного провайдера ключа нет — автоматический фолбэк на него.
  */
 
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
@@ -59,7 +64,7 @@ type SearchResult = {
   description: string;
 };
 
-type SearchProvider = "brave" | "perplexity" | "grok" | "tavily";
+type SearchProvider = "brave" | "perplexity" | "grok" | "tavily" | "deepseek";
 
 /** Providers that return ready text — no page fetching needed */
 type TextSearchResponse = {
@@ -243,6 +248,8 @@ export function createAutonomousResearch(
     if (raw === "grok") return "grok";
     if (raw === "tavily") return "tavily";
     if (raw === "brave") return "brave";
+    // v0.9.23: хост может хранить провайдера как "deepseek-official"
+    if (raw === "deepseek" || raw === "deepseek-official") return "deepseek";
     return "brave"; // default
   }
 
@@ -259,6 +266,8 @@ export function createAutonomousResearch(
         return searchPerplexity(queries);
       case "grok":
         return searchGrok(queries);
+      case "deepseek":
+        return searchDeepSeek(queries);
     }
   }
 
@@ -543,6 +552,13 @@ export function createAutonomousResearch(
         if (fromEnv && fromEnv.length > 5) return fromEnv;
         return null;
       }
+      case "deepseek": {
+        const dsCfg = searchCfg?.deepseek as { apiKey?: string } | undefined;
+        if (typeof dsCfg?.apiKey === "string" && dsCfg.apiKey.length > 5) return dsCfg.apiKey;
+        const fromEnv = process.env.DEEPSEEK_API_KEY;
+        if (fromEnv && fromEnv.length > 5) return fromEnv;
+        return null;
+      }
     }
   }
 
@@ -576,6 +592,111 @@ export function createAutonomousResearch(
     const fromConfig = search?.web?.search?.grok?.model;
     if (typeof fromConfig === "string" && fromConfig.trim()) return fromConfig.trim();
     return "grok-4-1-fast";
+  }
+
+  // ── DeepSeek (v0.9.23) ─────────────────────────────────────────
+  // Anthropic-совместимый эндпоинт со встроенным инструментом
+  // web_search_20250305; ключ тот же, что у чата. Возвращает готовый
+  // текст с цитатами — страницы читать не нужно (тип "text").
+
+  function resolveDeepSeekBaseUrl(gatewayConfig: NeuroClawConfig): string {
+    const search = (gatewayConfig as Record<string, unknown>).tools as
+      | { web?: { search?: { deepseek?: { baseUrl?: string } } } }
+      | undefined;
+    const fromConfig = search?.web?.search?.deepseek?.baseUrl;
+    if (typeof fromConfig === "string" && fromConfig.trim()) return fromConfig.trim();
+    return "https://api.deepseek.com/anthropic/v1";
+  }
+
+  function resolveDeepSeekModel(gatewayConfig: NeuroClawConfig): string {
+    const search = (gatewayConfig as Record<string, unknown>).tools as
+      | { web?: { search?: { deepseek?: { model?: string } } } }
+      | undefined;
+    const fromConfig = search?.web?.search?.deepseek?.model;
+    if (typeof fromConfig === "string" && fromConfig.trim()) return fromConfig.trim();
+    return "deepseek-v4-flash";
+  }
+
+  async function searchDeepSeek(queries: string[]): Promise<TextSearchResponse | null> {
+    if (!deps || !config) return null;
+
+    const apiKey = resolveApiKey("deepseek");
+    if (!apiKey) {
+      deps.logger.info("BrainAgent AutonomousResearch: no DeepSeek API key available");
+      return null;
+    }
+
+    // Один запрос на все спланированные темы — как у Perplexity
+    const combinedQuery = queries.join("; ");
+    const baseUrl = resolveDeepSeekBaseUrl(deps.gatewayConfig);
+    const model = resolveDeepSeekModel(deps.gatewayConfig);
+
+    try {
+      const response = await fetch(`${baseUrl}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          // Официальный DeepSeek ждёт x-api-key; прокси — Bearer: шлём оба
+          "x-api-key": apiKey,
+          Authorization: `Bearer ${apiKey}`,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: `Perform a web search for the query: ${combinedQuery}` }],
+            },
+          ],
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!response.ok) {
+        deps.logger.info(
+          `BrainAgent AutonomousResearch: DeepSeek search failed (HTTP ${response.status})`,
+        );
+        return null;
+      }
+
+      const parsed = (await response.json()) as {
+        content?: Array<Record<string, unknown>>;
+      };
+
+      const blocks = parsed.content ?? [];
+      const textParts: string[] = [];
+      const citations: string[] = [];
+
+      for (const block of blocks) {
+        if (block.type === "text" && typeof block.text === "string") {
+          textParts.push(block.text);
+        }
+        if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+          for (const item of block.content as Array<Record<string, unknown>>) {
+            if (item.type === "web_search_result" && typeof item.url === "string" && item.url) {
+              citations.push(typeof item.title === "string" ? `${item.title} — ${item.url}` : item.url);
+            }
+          }
+        }
+      }
+
+      if (citations.length === 0) {
+        // Нет блоков поиска — запрос, видимо, не ушёл в вебе
+        deps.logger.info(
+          "BrainAgent AutonomousResearch: DeepSeek returned no web_search_tool_result blocks",
+        );
+        return null;
+      }
+
+      return { type: "text", content: textParts.join("\n\n"), citations };
+    } catch (error) {
+      deps.logger.info(`BrainAgent AutonomousResearch: DeepSeek search error: ${String(error)}`);
+      return null;
+    }
   }
 
   // ── Phase 3: Fetch pages (Brave/Tavily only) ─────────────────
@@ -740,7 +861,15 @@ export function createAutonomousResearch(
     const provider = resolveSearchProvider(deps.gatewayConfig);
     deps.logger.info(`BrainAgent AutonomousResearch: using search provider "${provider}"`);
 
-    const searchResponse = await searchWeb(queries, provider);
+    let searchResponse = await searchWeb(queries, provider);
+    // v0.9.23: если у настроенного провайдера нет ключа, пробуем DeepSeek —
+    // тот же ключ, что у чата, дополнительных настроек не требует.
+    if (!searchResponse && provider !== "deepseek" && resolveApiKey("deepseek")) {
+      deps.logger.info(
+        'BrainAgent AutonomousResearch: provider "' + provider + '" unavailable, falling back to deepseek',
+      );
+      searchResponse = await searchWeb(queries, "deepseek");
+    }
     if (!searchResponse) {
       deps.logger.info("BrainAgent AutonomousResearch: search returned nothing, skipping");
       return null;

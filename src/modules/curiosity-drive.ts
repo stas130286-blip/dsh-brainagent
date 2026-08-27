@@ -268,6 +268,51 @@ export function initCuriosityDrive(workspaceDir: string, config: BrainAgentConfi
   active = createCuriosityDrive(workspaceDir, config);
 }
 
+/**
+ * v0.9.23: тема пробела знаний — очищенная фраза, а не сырой ввод.
+ * Возвращает null, если реплика не несёт познавательного содержания:
+ * приветствия, команды-напоминания, короткие подтверждения. Из запросов
+ * напоминаний вырезается каркас («напомни через 2 минуты, что …»).
+ */
+export function extractGapTopic(input: string): string | null {
+  const text = input.trim();
+  if (text.length < 4) return null;
+
+  const NOISE_RE = [
+    /^(привет|здравствуй|хай|добрый\s+(день|вечер|утро)|хеллоу)[\s!,.?]/i,
+    /^(hi|hello|hey)[\s!,.?]/i,
+    /как\s+(дела|ты|настроение)/i,
+  ];
+  // \b в JS-регэкспах не работает с кириллицей — пробельные якоря вместо него
+  const REMINDER_COMMAND_RE =
+    /(поставь|создай)?\s*(напоминание|напомни)\s.*(через|в)\s/i;
+
+  let candidate = text;
+  if (REMINDER_COMMAND_RE.test(candidate)) {
+    const commaIdx = candidate.indexOf(",");
+    const colonIdx = candidate.indexOf(":");
+    const dashIdx = candidate.indexOf("—");
+    const idx = [commaIdx, colonIdx, dashIdx].find((i) => i > 0) ?? -1;
+    if (idx === -1) return null; // чистая команда-напоминание — не пробел знаний
+    candidate = candidate.slice(idx + 1).trim();
+    // каркас вырезан — убираем стартовый союз («что», «чтобы»)
+    candidate = candidate.replace(/^(что|чтобы)\s+/i, "").trim();
+  }
+
+  if (candidate.length < 4) return null;
+  if (NOISE_RE.some((re) => re.test(candidate))) return null;
+
+  // Обрезаем по границе предложения и чистим хвостовую пунктуацию
+  let clean = candidate.replace(/[.!?…]+\s*$/g, "").trim();
+  const sentenceEnd = clean.search(/[.!?]/);
+  if (sentenceEnd > 0 && sentenceEnd < clean.length - 1) {
+    clean = clean.slice(0, sentenceEnd).trim();
+  }
+  if (clean.length > 100) clean = clean.slice(0, 100).trim();
+  if (clean.length < 4) return null;
+  return clean;
+}
+
 export function detectKnowledgeGap(
   topic: string,
   domain: MessageDomain,
