@@ -65,6 +65,7 @@ export type GoalStackInstance = {
     expired: number;
     desireCount: number;
     decisionCount: number;
+    extinctions: number;
   };
   addDesire(type: Desire["type"], description: string, strength: number, source: string): Desire;
   resolveDesireCompetition(context: string): Desire | undefined;
@@ -117,6 +118,9 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
   const desireCycleAge = new Map<string, number>();
   /** How many times each desire has been escalated without user response. */
   const desireEscalationCount = new Map<string, number>();
+
+  /** v0.9.21: сколько раз угасание ослабляло желания (просроченные авто-цели). */
+  let extinctions = 0;
 
   // ── Persistence ─────────────────────────────────────────────────
 
@@ -342,6 +346,7 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
     expired: number;
     desireCount: number;
     decisionCount: number;
+    extinctions: number;
   } {
     return {
       total: goals.length,
@@ -351,6 +356,7 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
       expired: goals.filter((g) => g.status === "expired").length,
       desireCount: desires.length,
       decisionCount: decisionLog.length,
+      extinctions,
     };
   }
 
@@ -873,6 +879,26 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
     if (triggered.length > 0) persistState();
     return triggered;
   }
+
+  // ── Extinction (v0.9.21) ─────────────────────────────────────────
+  // Аналог негативной ошибки предсказания дофамина: автономная цель,
+  // истёкшая без награды, ослабляет желания (×0.85). Пользовательские цели
+  // не угасают — для них ожидание нормально.
+  bus.on("goal:expired", (data) => {
+    const goal = goals.find((g) => g.id === data.goalId);
+    if (!goal || goal.source === "user") return;
+    let changed = false;
+    for (const desire of desires) {
+      if (desire.strength > 0.05) {
+        desire.strength = Math.round(desire.strength * 0.85 * 1000) / 1000;
+        changed = true;
+      }
+    }
+    if (changed) {
+      extinctions++;
+      persistState();
+    }
+  });
 
   // ── Init: load persisted state ──────────────────────────────────
 

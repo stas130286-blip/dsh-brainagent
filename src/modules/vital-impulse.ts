@@ -234,6 +234,17 @@ export function createVitalImpulse(
    */
   let gabaInhibitionLevel = 0;
 
+  /**
+   * Metabolic fatigue — cognitive control has an energetic cost (v0.9.21).
+   *
+   * В мозге накопление глутамата в латеральной ПФК при длительной работе
+   * повышает «стоимость усилия» добровольных действий — уставший человек
+   * реже проявляет инициативу. Здесь: каждый сигнал истощения метаболического
+   * бюджета поднимает порог срабатывания импульса; ребалансировка (отдых)
+   * усталость снимает. Не персистируется: рестарт = отдых.
+   */
+  let metabolicFatigue = 0;
+
   /** Synaptic plasticity learning rate (read from config) */
   const hebbianLearningRate = cfg?.synapticPlasticity?.learningRate ?? 0.1;
 
@@ -368,6 +379,10 @@ export function createVitalImpulse(
     // the threshold multiplicatively — biological diminishing response.
     // 1st fire: ×1.0, 2nd: ×1.5, 3rd: ×2.0, 4th: ×2.5, ...
     effectiveThreshold *= 1 + habituationLevel;
+
+    // v0.9.21: метаболическая усталость повышает «стоимость усилия» —
+    // при истощённых модулях для инициативы нужно больше давления.
+    effectiveThreshold *= 1 + metabolicFatigue;
 
     if (currentPressure < effectiveThreshold) {
       return;
@@ -677,6 +692,28 @@ export function createVitalImpulse(
       return `Приоритет: ${data.reason}`;
     });
 
+    // v0.9.21: закрепление эмерджентного паттерна — «ага-момент».
+    // Как инсайт в мозге, даёт дофаминергический всплеск и заметный импульс.
+    wire("emergent:pattern-established", (d) => {
+      const data = d as { name: string; confidence: number };
+      return `Эмерджентный паттерн закреплён: ${data.name} (${Math.round(data.confidence * 100)}%)`;
+    });
+
+    // ── Metabolic fatigue (v0.9.21) ──────────────────────────────────────
+    // Аналог накопления глутамата в ПФК: каждый сигнал истощения повышает
+    // «стоимость» инициативы (до +75% к порогу); ребалансировка её снимает.
+
+    unsubscribers.push(
+      bus.on("metabolic:energy-low", () => {
+        metabolicFatigue = Math.min(0.75, metabolicFatigue + 0.25);
+      }),
+    );
+    unsubscribers.push(
+      bus.on("metabolic:rebalanced", () => {
+        metabolicFatigue = 0;
+      }),
+    );
+
     // ── Hebbian learning: reinforce signal weights after dopamine reward ──
 
     const unsubReward = bus.on("dopamine:reward", (signal) => {
@@ -762,6 +799,8 @@ export function createVitalImpulse(
     }
     // Include habituation in the reported threshold
     effectiveThreshold *= 1 + habituationLevel;
+    // v0.9.21: усталость тоже отражается в эффективном пороге.
+    effectiveThreshold *= 1 + metabolicFatigue;
 
     const refractoryMs = config?.refractoryPeriodMs ?? 0;
     const sinceFire = lastFireTime > 0 ? Date.now() - lastFireTime : Number.POSITIVE_INFINITY;

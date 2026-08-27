@@ -30,7 +30,7 @@ import { buildDomainRecommendationContext } from "../modules/emergent-modules.ts
 import { buildWorkingMemoryContext } from "../modules/working-memory.ts";
 import { buildSessionBridgeContext } from "../modules/session-bridge.ts";
 import { buildGoalContext, buildVolitionContext } from "../modules/goal-stack.ts";
-import { buildBackgroundThoughtContext, getRecentUnusedInsights } from "../modules/dmn.ts";
+import { buildBackgroundThoughtContext, getRecentUnusedInsights, prepareProactiveContext } from "../modules/dmn.ts";
 import { buildCuriosityContext } from "../modules/curiosity-drive.ts";
 import { chooseArm } from "../modules/strategy-bandit.ts";
 import { consumeMotivation } from "../modules/vital-impulse.ts";
@@ -353,6 +353,18 @@ export function createPreStepHandler(deps: PreStepDeps) {
       if (bgCtx) injections.push(bgCtx);
       if (getRecentUnusedInsights().length > 0) {
         cyc.insightUsed = true;
+      }
+      // v0.9.21: проспективная функция сети пассивного режима мозга —
+      // загодя готовить материал для предсказанных тем. Если предсказательный
+      // движок уверен в теме и у DMN есть неиспользованный инсайт — он попадает в контекст.
+      if (brainConfig.modules.predictiveEngine) {
+        const proactive = prepareProactiveContext(
+          predict().map((p) => ({ topic: p.predictedTopic, confidence: p.confidence })),
+        );
+        if (proactive) {
+          injections.push(proactive);
+          cyc.insightUsed = true;
+        }
       }
     }
 

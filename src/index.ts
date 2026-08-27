@@ -77,7 +77,7 @@ import { initAttentionGate, getAttentionStats } from "./modules/attention-gate.t
 import { initMirrorStorage, getUserModel } from "./modules/mirror-neurons.ts";
 import { initPredictiveStorage } from "./modules/predictive-engine.ts";
 import { initBasalStorage } from "./modules/basal-ganglia.ts";
-import { initDopamineSystem, getNeuromodulatorState, stopDopamineSystem } from "./modules/dopamine-system.ts";
+import { initDopamineSystem, getNeuromodulatorState, markNovelty, stopDopamineSystem } from "./modules/dopamine-system.ts";
 import { initLearningCoordinator, stopLearningCoordinator } from "./modules/learning-coordinator.ts";
 import { initNeuralPathways, stopNeuralPathways } from "./modules/neural-pathways.ts";
 import { initStructuralPlasticity, markModuleActivation, stopStructuralPlasticity } from "./modules/structural-plasticity.ts";
@@ -930,6 +930,17 @@ export function apply(ctx: Context, config: Config) {
           for (const cyc of cycles.values()) {
             cyc.goalCompleted = true;
           }
+        }),
+      );
+    }
+
+    // v0.9.21: сигнал новизны гиппокампа — каждая найденная кросс-доменная
+    // ассоциация вызывает малый дофаминергический всплеск новизны (Лисман–Грейс:
+    // новизна усиливает консолидацию новых связей).
+    if (brainConfig.modules.dmn && brainConfig.modules.neuromodulatorSystem) {
+      unsubs.push(
+        bus.on("dmn:association-found", () => {
+          markNovelty();
         }),
       );
     }

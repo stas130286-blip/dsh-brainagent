@@ -851,6 +851,8 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
       // Temporal Awareness signals
       "temporal:long-absence": 0.4,
       "temporal:frequent-engagement": 0.1,
+      // v0.9.21: эмерджентный инсайт — дофаминергический всплеск «ага-момента»
+      "emergent:pattern-established": 0.45,
     },
     genericFireMultiplier: 1.6, // Fallback multiplier for unweighted fire events
     habituationHalfLifeMinutes: 5, // ~5 min half-life for habituation recovery

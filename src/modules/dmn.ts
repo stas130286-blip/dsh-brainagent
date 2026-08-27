@@ -31,6 +31,7 @@ export interface DMNInstance {
     lastRunTimestamp: number;
     associationsFound: number;
     backgroundThoughts: number;
+    proactiveContextsPrepared: number;
   };
   generateBackgroundThoughts: (
     config: BrainAgentConfig,
@@ -60,6 +61,8 @@ export function createDMN(
   const insights: DMNInsight[] = [];
   let lastRunTimestamp = 0;
   let totalAssociationsFound = 0;
+  /** v0.9.21: сколько проактивных заготовок собрано для предсказанных тем. */
+  let proactiveContextsPrepared = 0;
   let currentConfig: BrainAgentConfig | null = null;
   let logger: DMNLogger | undefined = log;
   const innerMonologue: BackgroundThought[] = [];
@@ -270,6 +273,7 @@ export function createDMN(
 
     const insight = relevantInsights[0];
     insight.wasUseful = true;
+    proactiveContextsPrepared++;
     persistState();
 
     bus.emitSync("dmn:proactive-context-prepared", {
@@ -287,6 +291,7 @@ export function createDMN(
       lastRunTimestamp,
       associationsFound: totalAssociationsFound,
       backgroundThoughts: innerMonologue.length,
+      proactiveContextsPrepared,
     };
   }
 
@@ -494,6 +499,7 @@ export function getDMNStats(): {
   lastRunTimestamp: number;
   associationsFound: number;
   backgroundThoughts: number;
+  proactiveContextsPrepared: number;
 } {
   return current().getStats();
 }
