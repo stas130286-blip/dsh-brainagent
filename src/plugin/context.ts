@@ -47,7 +47,7 @@ import { buildTemporalContext as buildTemporalAwarenessContext } from "../module
 import { filterContextInjections } from "../modules/attention-gate.ts";
 import { assembleContext } from "../modules/prefrontal-cortex.ts";
 import { recordInjectionCycle } from "../modules/injection-metrics.ts";
-import { isResearchIntent, executeResearch } from "../modules/autonomous-research.ts";
+import { isResearchIntent, executeResearch, buildResearchInjection } from "../modules/autonomous-research.ts";
 import { AUTONOMOUS_TAG_PREFIX, isAutonomousInput, textOfContent } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { CycleState } from "./cycles.ts";
@@ -100,6 +100,19 @@ export function buildClockContext(now: Date = new Date()): string {
     `## Current date and time\n` +
     `${weekday}, ${now.getDate()} ${month} ${now.getFullYear()} г., ${hh}:${mm} (местное время).`
   );
+}
+
+/**
+ * v0.9.24: итоги исследования освобождены от фильтрации. Рука "lean"
+ * бандита и гейт внимания могли отбросить блок исследования — тогда
+ * модель вообще не видела результаты. Блок добавляется после всех фильтров.
+ */
+export function preserveResearchBlock(
+  filtered: string[],
+  researchBlock: string | undefined,
+): string[] {
+  if (!researchBlock) return filtered;
+  return [researchBlock, ...filtered];
 }
 
 export type PreStepDeps = {
@@ -163,14 +176,11 @@ export function createPreStepHandler(deps: PreStepDeps) {
         `BrainAgent AutonomousResearch: detected research intent (source=${state.lastAutonomousSource}), running isolated pipeline for "${topic}"`,
       );
       const result = await executeResearch(topic);
-      if (result?.summary) {
-        cyc.researchSummary = [
-          "## Research Results (Autonomous Research Pipeline)",
-          result.summary,
-          `(${result.factsStored} facts stored to memory, ${result.queriesExecuted} queries, ${result.pagesRead} pages)`,
-        ].join("\n");
+      const researchBlock = result ? buildResearchInjection(result) : undefined;
+      if (researchBlock) {
+        cyc.researchSummary = researchBlock;
         logger.info(
-          `BrainAgent AutonomousResearch: injected summary (${result.summary.length} chars, ${result.factsStored} facts)`,
+          `BrainAgent AutonomousResearch: injecting research block (${researchBlock.length} chars, ${result?.factsStored ?? 0} facts)`,
         );
       }
     }
@@ -330,10 +340,9 @@ export function createPreStepHandler(deps: PreStepDeps) {
 
     // ── Phase 3: autonomic context injections ──
 
-    // Isolated research pipeline summary (autonomous research cycles).
-    if (cyc.researchSummary) {
-      injections.push(cyc.researchSummary);
-    }
+    // Блок изолированного конвейера (cyc.researchSummary) не идёт через
+    // общий канал инъекций: он освобождён от фильтров бандита и гейта
+    // внимания (v0.9.24) и добавляется после них через preserveResearchBlock.
 
     // Session bridge: previous session summary.
     if (brainConfig.modules.sessionBridge) {
@@ -466,6 +475,8 @@ export function createPreStepHandler(deps: PreStepDeps) {
         : 0.5;
       filtered = filterContextInjections(assembled, input, norepinephrine, brainConfig);
     }
+    // v0.9.24: итоги исследования минуют бандит и гейт внимания.
+    filtered = preserveResearchBlock(filtered, cyc.researchSummary);
 
     const brainState: BrainState = {
       input,

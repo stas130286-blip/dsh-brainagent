@@ -1011,6 +1011,9 @@ export function apply(ctx: Context, config: Config) {
   if (brainConfig.modules.sessionBridge) {
     metrics.register("sessionBridge", () => getSessionBridgeStats());
   }
+  if (brainConfig.modules.autonomousResearch) {
+    metrics.register("autonomousResearch", () => getAutonomousResearchStats());
+  }
   metrics.update();
 
   // ── Cordis service provider ─────────────────────────────────

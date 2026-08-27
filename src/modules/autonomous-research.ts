@@ -22,6 +22,11 @@
  * DeepSeek (/anthropic/v1/messages) со встроенным инструментом
  * web_search_20250305; ключ тот же, что у чата (DEEPSEEK_API_KEY).
  * Если у настроенного провайдера ключа нет — автоматический фолбэк на него.
+ *
+ * v0.9.24: ResearchResult.facts несёт содержимое всех извлечённых фактов;
+ * buildResearchInjection строит полный инъекционный блок (инструкция,
+ * сводка, топ фактов) — боевой прогон показал, что одной сводки модели
+ * недостаточно: она опиралась на общие знания, а не на найденные факты.
  */
 
 import { readFileSync } from "node:fs";
@@ -33,6 +38,8 @@ import type { BrainAgentConfig } from "./types.ts";
 
 export type ResearchResult = {
   summary: string;
+  /** v0.9.24: содержимое всех извлечённых фактов — для полной инъекции в контекст. */
+  facts: string[];
   factsStored: number;
   queriesExecuted: number;
   pagesRead: number;
@@ -773,7 +780,7 @@ export function createAutonomousResearch(
     pagesRead: number,
   ): Promise<ResearchResult> {
     if (!deps || !config) {
-      return { summary: "", factsStored: 0, queriesExecuted, pagesRead };
+      return { summary: "", facts: [], factsStored: 0, queriesExecuted, pagesRead };
     }
 
     const systemPrompt = [
@@ -799,7 +806,7 @@ export function createAutonomousResearch(
 
     if (!result) {
       deps.logger.info("BrainAgent AutonomousResearch: extraction LLM call failed");
-      return { summary: "", factsStored: 0, queriesExecuted, pagesRead };
+      return { summary: "", facts: [], factsStored: 0, queriesExecuted, pagesRead };
     }
 
     // Parse extracted facts
@@ -840,6 +847,7 @@ export function createAutonomousResearch(
 
     return {
       summary: summary || `Researched "${topic}" — found ${facts.length} facts.`,
+      facts: facts.map((f) => f.content),
       factsStored: facts.length,
       queriesExecuted,
       pagesRead,
@@ -943,6 +951,54 @@ export function createAutonomousResearch(
   }
 
   return { executeResearch, getStats, stop };
+}
+
+// ── v0.9.24: сборка полного инъекционного блока ─────────────────
+
+/** Максимум фактов в инъекционном блоке (бюджет ~500 токенов). */
+const RESEARCH_INJECTION_MAX_FACTS = 8;
+/** Максимальная длина факта в блоке. */
+const RESEARCH_INJECTION_FACT_CHARS = 280;
+
+/**
+ * v0.9.24: собирает полный блок исследования для инъекции: инструкция,
+ * сводка и топ фактов. Боевой прогон показал, что инъекция одной сводки
+ * недостаточна — модель опиралась на общие знания, а не на извлечённые
+ * факты. Инструкция также запрещает повторный вызов инструментов поиска:
+ * в автономных ходах они заблокированы гейтом, и повторная попытка даёт
+ * только ошибку в логе.
+ * Возвращает undefined, если встраивать в контекст нечего.
+ */
+export function buildResearchInjection(result: ResearchResult): string | undefined {
+  if (!result.summary && result.factsStored === 0) return undefined;
+
+  const lines: string[] = [
+    "## Research Results (Autonomous Research Pipeline)",
+    "",
+    "Инструкция: поиск уже выполнен изолированным конвейером — не вызывай",
+    "инструменты поиска (web_search, web_fetch) повторно в этом ходе.",
+    "Строя сообщение, опирайся прежде всего на факты ниже и не добавляй",
+    "утверждений, выходящих за их пределы.",
+  ];
+  if (result.summary) {
+    lines.push("", result.summary);
+  }
+  const top = (result.facts ?? []).slice(0, RESEARCH_INJECTION_MAX_FACTS);
+  if (top.length > 0) {
+    lines.push("", "Ключевые факты:");
+    for (const fact of top) {
+      const clipped =
+        fact.length > RESEARCH_INJECTION_FACT_CHARS
+          ? fact.slice(0, RESEARCH_INJECTION_FACT_CHARS).trimEnd() + "…"
+          : fact;
+      lines.push(`- ${clipped}`);
+    }
+  }
+  lines.push(
+    "",
+    `(${result.factsStored} facts stored to memory, ${result.queriesExecuted} queries, ${result.pagesRead} pages)`,
+  );
+  return lines.join("\n");
 }
 
 // ── Active-instance wrappers (backward-compatible API) ───────────
