@@ -76,6 +76,25 @@ describe("startGoalReminderScheduler (v0.9.7)", () => {
     }
   });
 
+  it("учитывает доставленные напоминания через recordExecuted (v0.9.20)", () => {
+    vi.useFakeTimers();
+    const recorded: number[] = [];
+    let calls = 0;
+    const stop = startGoalReminderScheduler({
+      checkAutonomousGoals: () => (++calls === 1 ? [flowerGoal] : []),
+      buildGoalContext: () => undefined,
+      enqueue: () => {},
+      recordExecuted: (n) => recorded.push(n),
+    });
+    try {
+      vi.advanceTimersByTime(DEFAULT_REMINDER_CHECK_MS + 10);
+      vi.advanceTimersByTime(DEFAULT_REMINDER_CHECK_MS + 10);
+      expect(recorded).toEqual([1]);
+    } finally {
+      stop();
+    }
+  });
+
   it("stop() останавливает планировщик", () => {
     vi.useFakeTimers();
     const enqueued: string[] = [];

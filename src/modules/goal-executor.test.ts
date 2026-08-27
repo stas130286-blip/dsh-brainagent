@@ -6,7 +6,8 @@ import {
   recordGoalExecution,
   stopGoalExecutor,
 } from "./goal-executor.ts";
-import { DEFAULT_CONFIG } from "./types.ts";
+import { DEFAULT_CONFIG, type Goal } from "./types.ts";
+import { createAutonomousIntentResolver, createAutonomyState } from "../plugin/autonomy.ts";
 
 const noopLog = { info: () => {} };
 
@@ -31,5 +32,32 @@ describe("goal executor per-instance состояние (v0.6.1)", () => {
     // record после stop молча игнорируется (до следующего init)
     recordGoalExecution(5);
     expect(getGoalExecutorStats().totalGoalsExecuted).toBe(0);
+  });
+});
+
+describe("v0.9.20: резолвер автономии учитывает исполнение целей", () => {
+  it("сработавшие цели резолвера попадают в статистику goal-executor", () => {
+    initGoalExecutor(DEFAULT_CONFIG, noopLog);
+    const goal = {
+      id: "g1",
+      description: "проверить форум",
+      trigger: { type: "interval" },
+    } as unknown as Goal;
+    const resolver = createAutonomousIntentResolver({
+      state: createAutonomyState(),
+      brainConfig: DEFAULT_CONFIG,
+      drives: {},
+      goalStack: {
+        getGoalStackStats: () => ({ pending: 1 }),
+        checkAutonomousGoals: () => [goal],
+        buildGoalContext: () => "контекст цели",
+        getDesires: () => [],
+      },
+    });
+    const intent = resolver();
+    expect(intent).not.toBeNull();
+    expect(intent?.source).toBe("goal:g1");
+    expect(getGoalExecutorStats().totalGoalsExecuted).toBe(1);
+    stopGoalExecutor();
   });
 });

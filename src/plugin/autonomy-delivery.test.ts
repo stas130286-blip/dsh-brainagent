@@ -23,7 +23,11 @@ const MEMORIES = [
 
 const TAGGED = "<autonomous-intent>\nПоделись мыслью.\n</autonomous-intent>";
 
-function makeDeps(state = createAutonomyState(), minUserSilenceMs = 0) {
+function makeDeps(
+  state = createAutonomyState(),
+  minUserSilenceMs = 0,
+  thalamic?: AutonomousDelivererDeps["thalamic"],
+) {
   const delivered: string[] = [];
   const deps: AutonomousDelivererDeps = {
     state,
@@ -38,6 +42,7 @@ function makeDeps(state = createAutonomyState(), minUserSilenceMs = 0) {
     classifyDomain: () => ({ domain: "casual" as const }),
     isDomainSuppressed: () => false,
     getSuppressedDomainHints: () => [],
+    thalamic,
   };
   return { state, delivered, deliver: createAutonomousDeliverer(deps) };
 }
@@ -111,6 +116,39 @@ describe("v0.9.18: тихий гард — инициатива не вклин�
     state.lastUserMessageAt = Date.now();
     const { delivered, deliver } = makeDeps(state, 3 * 60 * 1000);
     deliver(AUTONOMY_PRIORITY_PREFIX + TAGGED);
+    expect(delivered).toHaveLength(1);
+  });
+});
+
+describe("v0.9.20: таламический гейт фильтрует спонтанные инициативы", () => {
+  const gate = (activate: boolean) => ({
+    shouldActivateCortex: () => ({
+      activate,
+      dominantSignal: activate ? "drive-need" : "cooldown",
+    }),
+  });
+
+  it("интент подавляется, когда таламус не пропускает активацию", () => {
+    const { delivered, deliver } = makeDeps(createAutonomyState(), 0, gate(false));
+    deliver(TAGGED);
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("интент доставляется, когда таламус пропускает активацию", () => {
+    const { delivered, deliver } = makeDeps(createAutonomyState(), 0, gate(true));
+    deliver(TAGGED);
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("приоритетное напоминание обходит таламический фильтр", () => {
+    const { delivered, deliver } = makeDeps(createAutonomyState(), 0, gate(false));
+    deliver(AUTONOMY_PRIORITY_PREFIX + TAGGED);
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("без таламуса (модуль выключен) поведение не меняется", () => {
+    const { delivered, deliver } = makeDeps();
+    deliver(TAGGED);
     expect(delivered).toHaveLength(1);
   });
 });

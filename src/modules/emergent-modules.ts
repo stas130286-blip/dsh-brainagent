@@ -464,3 +464,35 @@ export function matchEstablishedModule(participants: ModuleName[]): EmergentModu
 export function getRecommendedModulesForDomain(domain: string): ModuleName[] | undefined {
   return current().getRecommendedModulesForDomain(domain);
 }
+
+// ── v0.9.20: инъекция проверенных связок в контекст ────────────────
+
+/** Дедупликация: не чаще раза в 30 минут на домен. */
+const lastDomainRecommendationAt = new Map<string, number>();
+const DOMAIN_RECOMMENDATION_DEDUP_MS = 30 * 60 * 1000;
+
+/** Сброс дедупликации (для тестов). */
+export function resetDomainRecommendationDedup(): void {
+  lastDomainRecommendationAt.clear();
+}
+
+/**
+ * Контекст «проверенной связки» для инъекции в agent/pre-step: если для
+ * домена найден устоявшийся эмерджентный паттерн, подсказываем модели
+ * комбинацию модулей. Возвращает undefined, если связки нет или она
+ * уже подсказывалась недавно (дедупликация по домену).
+ */
+export function buildDomainRecommendationContext(
+  domain: string,
+  nowMs = Date.now(),
+): string | undefined {
+  const participants = getRecommendedModulesForDomain(domain);
+  if (!participants || participants.length === 0) return undefined;
+  const last = lastDomainRecommendationAt.get(domain) ?? 0;
+  if (nowMs - last < DOMAIN_RECOMMENDATION_DEDUP_MS) return undefined;
+  lastDomainRecommendationAt.set(domain, nowMs);
+  return [
+    "## Проверенная связка модулей (эмерджентные паттерны)",
+    `Для домена «${domain}» стабильно хороший результат давала комбинация: ${participants.join(", ")}. Опирайся на неё в первую очередь.`,
+  ].join("\n");
+}

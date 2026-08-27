@@ -70,19 +70,20 @@ import {
   getFactsByCategory,
   pruneWeakWorkflows,
   mergeDuplicateWorkflows,
+  stopMemoryStorage,
 } from "./modules/hippocampus.ts";
 import { initWorkingMemoryStorage, getWorkingMemoryStats } from "./modules/working-memory.ts";
 import { initAttentionGate, getAttentionStats } from "./modules/attention-gate.ts";
 import { initMirrorStorage, getUserModel } from "./modules/mirror-neurons.ts";
 import { initPredictiveStorage } from "./modules/predictive-engine.ts";
 import { initBasalStorage } from "./modules/basal-ganglia.ts";
-import { initDopamineSystem, getNeuromodulatorState } from "./modules/dopamine-system.ts";
-import { initLearningCoordinator } from "./modules/learning-coordinator.ts";
-import { initNeuralPathways } from "./modules/neural-pathways.ts";
-import { initStructuralPlasticity, markModuleActivation } from "./modules/structural-plasticity.ts";
-import { initEmotionalMemory } from "./modules/emotional-memory.ts";
-import { initSessionBridge, checkSessionGap, getSessionBridgeStats } from "./modules/session-bridge.ts";
-import { initDMN, generateBackgroundThoughts, runAssociationFinding, getDMNStats, getRecentUnusedInsights } from "./modules/dmn.ts";
+import { initDopamineSystem, getNeuromodulatorState, stopDopamineSystem } from "./modules/dopamine-system.ts";
+import { initLearningCoordinator, stopLearningCoordinator } from "./modules/learning-coordinator.ts";
+import { initNeuralPathways, stopNeuralPathways } from "./modules/neural-pathways.ts";
+import { initStructuralPlasticity, markModuleActivation, stopStructuralPlasticity } from "./modules/structural-plasticity.ts";
+import { initEmotionalMemory, stopEmotionalMemory } from "./modules/emotional-memory.ts";
+import { initSessionBridge, checkSessionGap, getSessionBridgeStats, stopSessionBridge } from "./modules/session-bridge.ts";
+import { initDMN, generateBackgroundThoughts, runAssociationFinding, getDMNStats, getRecentUnusedInsights, stopDMN } from "./modules/dmn.ts";
 import {
   initGoalStack,
   getGoalStackStats,
@@ -97,8 +98,8 @@ import {
   tickExplorationBoosts,
   extractGoalsFromConversation,
 } from "./modules/goal-stack.ts";
-import { getGoalExecutorStats } from "./modules/goal-executor.ts";
-import { initCuriosityDrive, getCuriosityStats, getOpenGaps } from "./modules/curiosity-drive.ts";
+import { getGoalExecutorStats, recordGoalExecution } from "./modules/goal-executor.ts";
+import { initCuriosityDrive, getCuriosityStats, getOpenGaps, stopCuriosityDrive } from "./modules/curiosity-drive.ts";
 import { initSocialDrive, stopSocialDrive, getSocialDriveStats, getSatiation as getSocialDriveSatiation } from "./modules/social-drive.ts";
 import { initCognitiveHunger, stopCognitiveHunger, getCognitiveHungerStats, getCognitiveHungerSatiation } from "./modules/cognitive-hunger.ts";
 import { initCreativeDrive, stopCreativeDrive, getCreativeDriveStats, getCreativeDriveSatiation } from "./modules/creative-drive.ts";
@@ -112,18 +113,18 @@ import { initAutonomyEnricher, stopAutonomyEnricher } from "./modules/autonomy-e
 import { initAutonomousResearch, stopAutonomousResearch, getAutonomousResearchStats } from "./modules/autonomous-research.ts";
 import { startDreamMode, stopDreamMode } from "./modules/dream-mode.ts";
 import { initCircadianRhythm, stopCircadianRhythm, recordActivity, getCircadianState } from "./modules/circadian-rhythm.ts";
-import { initIntrospection, getLastTrace, getIntrospectionStats } from "./modules/introspection.ts";
+import { initIntrospection, getLastTrace, getIntrospectionStats, stopIntrospection } from "./modules/introspection.ts";
 import { initAgentIdentity, getAgentIdentityStats } from "./modules/agent-identity.ts";
 import { initTemporalBinding, getTemporalBindingStats } from "./modules/temporal-binding.ts";
-import { initQualiaSimulator, getQualiaSimulatorStats } from "./modules/qualia-simulator.ts";
+import { initQualiaSimulator, getQualiaSimulatorStats, stopQualiaSimulator } from "./modules/qualia-simulator.ts";
 import { initTemporalAwareness, stopTemporalAwareness, recordInteraction, getTemporalAwarenessStats } from "./modules/temporal-awareness.ts";
 import { initInteroception, stopInteroception, getInteroceptiveState } from "./modules/interoception.ts";
 import { getSuppressedDomainHints, initProactiveFeedback, isDomainSuppressed, recordProactiveReaction, stopProactiveFeedback } from "./modules/proactive-feedback.ts";
 import { initRewardLedger, stopRewardLedger } from "./modules/reward-ledger.ts";
 import { initStrategyBandit, stopStrategyBandit } from "./modules/strategy-bandit.ts";
-import { initMetabolicBudget, consumeEnergy } from "./modules/metabolic-budget.ts";
-import { initEmergentModules } from "./modules/emergent-modules.ts";
-import { initThalamicGate, getThalamicGateStats } from "./modules/thalamic-gate.ts";
+import { initMetabolicBudget, consumeEnergy, stopMetabolicBudget } from "./modules/metabolic-budget.ts";
+import { initEmergentModules, stopEmergentModules } from "./modules/emergent-modules.ts";
+import { initThalamicGate, getThalamicGateStats, shouldActivateCortex, stopThalamicGate } from "./modules/thalamic-gate.ts";
 import { isInternalPluginMessage, isHarnessSystemMessage } from "./modules/message-guard.ts";
 import { attachLlmBridge } from "./adapter/llm-bridge.ts";
 import { callLLM } from "./modules/llm-client.ts";
@@ -250,6 +251,9 @@ export function apply(ctx: Context, config: Config) {
     classifyDomain: (text) => classify(text),
     isDomainSuppressed,
     getSuppressedDomainHints,
+    // v0.9.20: спонтанные инициативы проходят таламический фильтр
+    // активации (приоритетные напоминания обходят его в деливерере).
+    thalamic: brainConfig.modules.thalamicGate ? { shouldActivateCortex } : undefined,
   });
 
   const driveGetters = (): DriveGetters => ({
@@ -296,6 +300,7 @@ export function apply(ctx: Context, config: Config) {
 
   // ── Initialize storage layers ───────────────────────────────
   initMemoryStorage(dataDir);
+  disposers.push(stopMemoryStorage);
   // v0.9.13: чистка процедурного стора от слабых записей («Action: ANY»),
   // накопленных ранними версиями экстрактора. Идемпотентна и дёшева.
   const prunedWorkflows = pruneWeakWorkflows(2);
@@ -327,32 +332,40 @@ export function apply(ctx: Context, config: Config) {
   }
   if (brainConfig.modules.neuromodulatorSystem) {
     initDopamineSystem(dataDir);
+    disposers.push(stopDopamineSystem);
   }
   if (brainConfig.modules.learningCoordinator) {
     initLearningCoordinator(dataDir, brainConfig);
+    disposers.push(stopLearningCoordinator);
   }
   if (brainConfig.modules.neuralPathways) {
     initNeuralPathways(dataDir, brainConfig, logger);
+    disposers.push(stopNeuralPathways);
   }
   if (config.modules.structuralPlasticity) {
     initStructuralPlasticity(dataDir, brainConfig, logger);
+    disposers.push(stopStructuralPlasticity);
   }
   if (brainConfig.modules.emotionalMemory) {
     initEmotionalMemory(dataDir, brainConfig);
+    disposers.push(stopEmotionalMemory);
   }
 
   // ── Phase 3: autonomic layer ─────────────────────────────────
   if (brainConfig.modules.sessionBridge) {
     initSessionBridge(dataDir, brainConfig, logger);
+    disposers.push(stopSessionBridge);
   }
   if (brainConfig.modules.dmn) {
     initDMN(dataDir, brainConfig, logger);
+    disposers.push(stopDMN);
   }
   if (brainConfig.modules.goalStack) {
     initGoalStack(dataDir, brainConfig);
   }
   if (brainConfig.modules.curiosityDrive) {
     initCuriosityDrive(dataDir, brainConfig);
+    disposers.push(stopCuriosityDrive);
   }
 
   // Drives share the goal-stack primitives; DMN-backed thought generation.
@@ -432,6 +445,7 @@ export function apply(ctx: Context, config: Config) {
       checkAutonomousGoals,
       buildGoalContext,
       enqueue: (text) => enqueueAutonomousIntent(text),
+      recordExecuted: recordGoalExecution,
       logger,
     });
     disposers.push(() => stopGoalReminder());
@@ -526,11 +540,13 @@ export function apply(ctx: Context, config: Config) {
   // Metabolic Budget: energy-based resource allocation.
   if (brainConfig.modules.metabolicBudget) {
     initMetabolicBudget(dataDir, brainConfig, logger);
+    disposers.push(stopMetabolicBudget);
   }
 
   // Emergent modules: recurring co-activation pattern discovery.
   if (brainConfig.modules.emergentModules) {
     initEmergentModules(dataDir, brainConfig, logger);
+    disposers.push(stopEmergentModules);
   }
 
   // Proactive Feedback: обучение на «не зашло» для автономных сообщений.
@@ -551,6 +567,7 @@ export function apply(ctx: Context, config: Config) {
 
   if (brainConfig.modules.introspection) {
     initIntrospection(dataDir, brainConfig);
+    disposers.push(stopIntrospection);
   }
   if (brainConfig.modules.agentIdentity) {
     initAgentIdentity(dataDir, brainConfig);
@@ -560,6 +577,7 @@ export function apply(ctx: Context, config: Config) {
   }
   if (brainConfig.modules.qualiaSimulator) {
     initQualiaSimulator(dataDir, brainConfig);
+    disposers.push(stopQualiaSimulator);
   }
   if (brainConfig.modules.temporalAwareness) {
     initTemporalAwareness(dataDir, brainConfig, logger);
@@ -594,7 +612,17 @@ export function apply(ctx: Context, config: Config) {
   // always passes — so the gate is initialized for diagnostics only.
   if (brainConfig.modules.thalamicGate) {
     initThalamicGate(brainConfig.thalamicGate, {
-      getVitalImpulseStats: optional(brainConfig.modules.vitalImpulse, getVitalImpulseStats),
+      // v0.9.20: срабатывание обнуляет давление, поэтому «в момент
+      // доставки» сырой коэффициент всегда 0 и гейт душил бы импульс,
+      // который жизненно-импульсная система только что пропустила.
+      // Свежее срабатывание (≤10с) — это и есть главный сигнал: 1.0.
+      getVitalImpulseStats: optional(brainConfig.modules.vitalImpulse, () => {
+        const s = getVitalImpulseStats();
+        if (s.lastFireTime > 0 && Date.now() - s.lastFireTime <= 10_000) {
+          return { ...s, currentPressure: s.effectiveThreshold };
+        }
+        return s;
+      }),
       getAmygdalaAssessment: () => {
         const last = [...cycles.values()].at(-1);
         return last?.assessment;
@@ -622,6 +650,7 @@ export function apply(ctx: Context, config: Config) {
         return { unusedInsightCount: unused.length };
       }),
     });
+    disposers.push(stopThalamicGate);
   }
 
   // Diagnostics command (/brain status|dream|memory|...) + stat getters.

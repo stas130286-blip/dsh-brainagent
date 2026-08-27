@@ -22,6 +22,8 @@ export type GoalReminderDeps = {
   checkAutonomousGoals: (idleMs?: number) => Goal[];
   buildGoalContext: (goals: Goal[]) => string | undefined;
   enqueue: (text: string) => void;
+  /** v0.9.20: учёт доставленных напоминаний в статистике goal-executor. */
+  recordExecuted?: (count: number) => void;
   logger?: { info: (msg: string) => void };
   now?: () => number;
 };
@@ -61,6 +63,7 @@ export function startGoalReminderScheduler(deps: GoalReminderDeps): () => void {
       if (triggered.length === 0) return;
       const goalCtx = deps.buildGoalContext(triggered);
       deps.enqueue(buildReminderText(triggered, goalCtx));
+      deps.recordExecuted?.(triggered.length);
       deps.logger?.info(
         `BrainAgent GoalReminder: доставлено напоминаний: ${triggered.length}`,
       );

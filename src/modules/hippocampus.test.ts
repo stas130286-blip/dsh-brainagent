@@ -5,11 +5,19 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   initMemoryStorage,
   storeFact,
+  storeEpisode,
   recallFacts,
   recallAll,
+  recallEpisodes,
   getPendingContradictions,
   clearPendingContradictions,
 } from "./hippocampus.ts";
+import {
+  computeEmotionMatchBonus,
+  getEmotionalMemoryStats,
+  stopEmotionalMemory,
+} from "./emotional-memory.ts";
+import { DEFAULT_CONFIG } from "./types.ts";
 
 let tempDir: string;
 
@@ -88,5 +96,54 @@ describe("Hippocampus — semantic memory", () => {
     const all = recallAll("project deadline");
     expect(all.semantic.length).toBeGreaterThan(0);
     expect(all.semantic[0].category).toBe("work");
+  });
+});
+
+describe("Hippocampus — v0.9.20: эмоционально-согласованное вспоминание", () => {
+  let tempDir2: string;
+
+  beforeEach(() => {
+    tempDir2 = mkdtempSync(join(tmpdir(), "brainagent-hippo-emo-"));
+    initMemoryStorage(tempDir2);
+  });
+
+  afterEach(() => {
+    stopEmotionalMemory();
+    try {
+      rmSync(tempDir2, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
+  });
+
+  it("бонус за совпадение эмоции поднимает эпизод с той же меткой", () => {
+    storeEpisode(
+      "Команда отпраздновала успешный релиз проекта",
+      "релиз проекта",
+      "joy",
+      ["проект"],
+      0.4,
+    );
+    storeEpisode(
+      "Составили расписание встреч по проекту",
+      "расписание встреч",
+      "neutral",
+      ["проект"],
+      0.4,
+    );
+    const boosted = recallEpisodes("проект", 5, undefined, (memoryEmotion) =>
+      memoryEmotion === "joy" ? 0.5 : 0,
+    );
+    expect(boosted.length).toBeGreaterThan(0);
+    expect(boosted[0].emotionalContext).toBe("joy");
+  });
+
+  it("computeEmotionMatchBonus работает как бонус и считает матчи", () => {
+    storeEpisode("Пользователь получил отличную новость", "отличная новость", "joy", ["новость"], 0.4);
+    const bonus = (memoryEmotion: Parameters<typeof computeEmotionMatchBonus>[1]) =>
+      computeEmotionMatchBonus("joy", memoryEmotion, DEFAULT_CONFIG);
+    const all = recallAll("новость", 5, 5, bonus);
+    expect(all.episodic.length).toBeGreaterThan(0);
+    expect(getEmotionalMemoryStats().emotionMatchBoosts).toBeGreaterThanOrEqual(1);
   });
 });

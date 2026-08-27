@@ -30,6 +30,7 @@ import {
   AUTONOMY_PRIORITY_PREFIX,
 } from "./config.ts";
 import { AUTONOMY_MEMORIES_PREFIX } from "../modules/autonomy-markers.ts";
+import { recordGoalExecution } from "../modules/goal-executor.ts";
 
 // ── Shared mutable state ────────────────────────────────────────────
 
@@ -213,6 +214,17 @@ export type AutonomousDelivererDeps = {
   classifyDomain: (text: string) => { domain: MessageDomain };
   isDomainSuppressed: (domain: MessageDomain) => boolean;
   getSuppressedDomainHints: () => string[];
+  /**
+   * v0.9.20: необязательный таламический фильтр спонтанных инициатив.
+   * Структурный тип — чтобы слой плагина не тянул импорт из модулей.
+   */
+  thalamic?: {
+    shouldActivateCortex: (ctx: {
+      isUserMessage: boolean;
+      isEventDriven: boolean;
+      isIntervalHeartbeat: boolean;
+    }) => { activate: boolean; dominantSignal: string };
+  };
 };
 
 /**
@@ -266,6 +278,22 @@ export function createAutonomousDeliverer(deps: AutonomousDelivererDeps): (text:
       ) {
         logger.info("BrainAgent Autonomy: intent suppressed — user spoke recently (quiet guard)");
         return;
+      }
+      // v0.9.20: таламус решает, достойна ли спонтанная инициатива
+      // «коры» — композитный сигнал драйвов, целей и инсайтов.
+      // Приоритетные напоминания (обязательства по времени) фильтр обходят.
+      if (deps.thalamic) {
+        const decision = deps.thalamic.shouldActivateCortex({
+          isUserMessage: false,
+          isEventDriven: false,
+          isIntervalHeartbeat: true,
+        });
+        if (!decision.activate) {
+          logger.info(
+            `BrainAgent Autonomy: intent suppressed — thalamic gate (${decision.dominantSignal || "low activation"})`,
+          );
+          return;
+        }
       }
     }
     // «Не зашло»: темы, которые пользователь отверг, не заводим (v0.2.0).
@@ -354,6 +382,9 @@ export function createAutonomousIntentResolver(deps: IntentResolverDeps): () => 
           if (goalCtx) {
             // v0.9.7: time-цель — напоминание с приоритетной доставкой.
             const priority = triggered.some((g) => g.trigger.type === "time");
+            // v0.9.20: до этой версии goal-executor жил отдельно от резолвера —
+            // сработавшие автономные цели не попадали в его статистику.
+            recordGoalExecution(triggered.length);
             state.lastAutonomousSource = `goal:${triggered[0].id}`;
             return {
               text: [

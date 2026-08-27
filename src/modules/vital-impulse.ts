@@ -382,6 +382,10 @@ export function createVitalImpulse(
     // when the user talks, like a person's mood.
     currentMotivation = motivation;
 
+    // v0.9.20: метка срабатывания ставится ДО доставки — таламический
+    // фильтр в деливерере должен видеть свежее срабатывание как сигнал 1.0.
+    lastFireTime = now;
+
     // Check if there's something SPECIFIC worth reaching out about.
     // A real person doesn't text "I feel social." They reach out when
     // they have something to say: an idea, a follow-up, a question.
@@ -405,7 +409,6 @@ export function createVitalImpulse(
 
     // Reset state
     currentPressure = 0;
-    lastFireTime = now;
     totalFires++;
     consecutiveAutonomousFires++;
     // Increase habituation — each unanswered fire makes the next one harder
@@ -687,6 +690,10 @@ export function createVitalImpulse(
   function forceImpulse(reason?: string): void {
     if (!deps) return;
 
+    // v0.9.20: метка срабатывания до доставки — таламический фильтр в
+    // деливерере обязан видеть свежее срабатывание как сигнал 1.0.
+    lastFireTime = Date.now();
+
     const motivation =
       reason ??
       "<autonomous-intent>\nТебе хочется что-то сказать. Просто напиши — от себя, естественно.\nНе описывай внутренние побуждения.\n</autonomous-intent>";
@@ -694,7 +701,6 @@ export function createVitalImpulse(
     deps.enqueueSystemEvent(motivation, { contextKey: "vital-impulse" });
     deps.requestHeartbeatNow({ reason: "vital-impulse:forced", coalesceMs: 200 });
 
-    lastFireTime = Date.now();
     totalFires++;
     // Count forced fires against anti-spam too — otherwise repeated forcing
     // bypasses habituation/GABA and the next organic fire comes too easily.

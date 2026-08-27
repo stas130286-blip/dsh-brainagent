@@ -149,6 +149,8 @@ export interface HippocampusInstance {
     query: string,
     limit?: number,
     embeddingResults?: Array<{ id: string; score: number }>,
+    /** v0.9.20: бонус эмоц.-согласованного вспоминания на эпизод. */
+    emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): EpisodicMemory[];
   storeFact(
     content: string,
@@ -191,6 +193,7 @@ export interface HippocampusInstance {
     query: string,
     episodicLimit?: number,
     semanticLimit?: number,
+    emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): {
     episodic: EpisodicMemory[];
     semantic: SemanticMemory[];
@@ -200,6 +203,7 @@ export interface HippocampusInstance {
     query: string,
     episodicLimit?: number,
     semanticLimit?: number,
+    emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): Promise<{
     episodic: EpisodicMemory[];
     semantic: SemanticMemory[];
@@ -625,6 +629,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     query: string,
     limit = 5,
     embeddingResults?: Array<{ id: string; score: number }>,
+    emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): EpisodicMemory[] {
     if (episodicStore.length === 0) return [];
 
@@ -648,8 +653,13 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       const recencyScore = 1 / (1 + recencyDays * 0.1);
       const salienceScore = ep.salience;
 
-      // Hybrid: vector + recency 20% + salience 20%
-      const score = vectorScore + recencyScore * 0.2 + salienceScore * 0.2;
+      // Hybrid: vector + recency 20% + salience 20% (+ эмоц.-согласованный
+      // бонус: воспоминания с меткой текущей эмоции всплывают легче, v0.9.20)
+      const score =
+        vectorScore +
+        recencyScore * 0.2 +
+        salienceScore * 0.2 +
+        (emotionBonus?.(ep.emotionalContext) ?? 0);
       return { episode: ep, score };
     });
 
@@ -1217,6 +1227,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     query: string,
     episodicLimit = 3,
     semanticLimit = 5,
+    emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): {
     episodic: EpisodicMemory[];
     semantic: SemanticMemory[];
@@ -1225,7 +1236,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     // Try embedding-enhanced search first, merge with TF-IDF
     const embeddingScores = embeddingsAvailable ? getEmbeddingScoresSync(query) : null;
 
-    const episodic = recallEpisodes(query, episodicLimit, embeddingScores?.episodic);
+    const episodic = recallEpisodes(query, episodicLimit, embeddingScores?.episodic, emotionBonus);
     const semantic = recallFacts(query, undefined, semanticLimit, embeddingScores?.semantic);
     const workflow = findMatchingWorkflow(query);
 
@@ -1255,13 +1266,14 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     query: string,
     episodicLimit = 3,
     semanticLimit = 5,
+    emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): Promise<{
     episodic: EpisodicMemory[];
     semantic: SemanticMemory[];
     procedural: ProceduralMemory[];
   }> {
     if (!embeddingsAvailable) {
-      return recallAll(query, episodicLimit, semanticLimit);
+      return recallAll(query, episodicLimit, semanticLimit, emotionBonus);
     }
 
     // Compute embedding-based scores for all layers
@@ -1270,7 +1282,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       searchWithEmbeddings(query, "semantic", 15),
     ]);
 
-    const episodic = recallEpisodes(query, episodicLimit, epScores ?? undefined);
+    const episodic = recallEpisodes(query, episodicLimit, epScores ?? undefined, emotionBonus);
     const semantic = recallFacts(query, undefined, semanticLimit, semScores ?? undefined);
     const workflow = findMatchingWorkflow(query);
 
@@ -1651,8 +1663,9 @@ export function recallEpisodes(
   query: string,
   limit = 5,
   embeddingResults?: Array<{ id: string; score: number }>,
+  emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
 ): EpisodicMemory[] {
-  return current().recallEpisodes(query, limit, embeddingResults);
+  return current().recallEpisodes(query, limit, embeddingResults, emotionBonus);
 }
 
 export function storeFact(
@@ -1739,24 +1752,26 @@ export function recallAll(
   query: string,
   episodicLimit = 3,
   semanticLimit = 5,
+  emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
 ): {
   episodic: EpisodicMemory[];
   semantic: SemanticMemory[];
   procedural: ProceduralMemory[];
 } {
-  return current().recallAll(query, episodicLimit, semanticLimit);
+  return current().recallAll(query, episodicLimit, semanticLimit, emotionBonus);
 }
 
 export async function recallAllAsync(
   query: string,
   episodicLimit = 3,
   semanticLimit = 5,
+  emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
 ): Promise<{
   episodic: EpisodicMemory[];
   semantic: SemanticMemory[];
   procedural: ProceduralMemory[];
 }> {
-  return current().recallAllAsync(query, episodicLimit, semanticLimit);
+  return current().recallAllAsync(query, episodicLimit, semanticLimit, emotionBonus);
 }
 
 export async function consolidate(

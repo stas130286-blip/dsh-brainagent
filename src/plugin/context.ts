@@ -25,6 +25,8 @@ import { pinIdentityFacts } from "../modules/memory-identity.ts";
 import { predict } from "../modules/predictive-engine.ts";
 import { buildNeuromodulatorContext } from "../modules/neural-pathways.ts";
 import { buildLearningContext, buildCapabilityContext } from "../modules/learning-coordinator.ts";
+import { computeEmotionMatchBonus } from "../modules/emotional-memory.ts";
+import { buildDomainRecommendationContext } from "../modules/emergent-modules.ts";
 import { buildWorkingMemoryContext } from "../modules/working-memory.ts";
 import { buildSessionBridgeContext } from "../modules/session-bridge.ts";
 import { buildGoalContext, buildVolitionContext } from "../modules/goal-stack.ts";
@@ -222,7 +224,15 @@ export function createPreStepHandler(deps: PreStepDeps) {
     const attentionLevel = brainConfig.modules.neuromodulatorSystem ? getAttentionLevel() : 0.5;
     const episodicLimit = Math.max(1, Math.round(config.recall.episodicLimit * (0.5 + attentionLevel)));
     const semanticLimit = Math.max(1, Math.round(config.recall.semanticLimit * (0.5 + attentionLevel)));
-    const recalled = await recallAllAsync(input, episodicLimit, semanticLimit);
+    // v0.9.20: эмоция текущего цикла усиливает воспоминания с той же
+    // эмоциональной меткой (эмоционально-согласованное вспоминание:
+    // в «радостном» цикле радостные эпизоды всплывают легче).
+    const emotionBonus =
+      brainConfig.modules.emotionalMemory && cyc.assessment
+        ? (memoryEmotion: Parameters<typeof computeEmotionMatchBonus>[1]) =>
+            computeEmotionMatchBonus(cyc.assessment!.emotion, memoryEmotion, brainConfig)
+        : undefined;
+    const recalled = await recallAllAsync(input, episodicLimit, semanticLimit, emotionBonus);
     // v0.9.12: пиннинг identity-фактов (имя, имущество, работа). Они не
     // должны зависеть от релевантности запроса: вопрос «что ты знаешь
     // обо мне?» не может остаться без имени из-за лексического
@@ -292,6 +302,12 @@ export function createPreStepHandler(deps: PreStepDeps) {
         const capCtx = buildCapabilityContext(cyc.classification.domain);
         if (capCtx) injections.push(capCtx);
       }
+    }
+
+    // Emergent modules: проверенная связка модулей для домена (v0.9.20).
+    if (brainConfig.modules.emergentModules && cyc.classification) {
+      const recCtx = buildDomainRecommendationContext(cyc.classification.domain);
+      if (recCtx) injections.push(recCtx);
     }
 
     // Mirror neurons: learned communication style recommendation.
