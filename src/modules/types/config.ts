@@ -581,7 +581,7 @@ export type BrainAgentConfig = {
     maxPageChars: number;
     /** Total character budget for all web content per cycle */
     maxTotalChars: number;
-    /** Max output tokens for the fact-extraction LLM call */
+    /** Max output tokens for the fact-extraction LLM call (v0.9.26: reasoning models spend part of the budget on reasoning) */
     extractMaxTokens: number;
     /** Minimum ms between research cycles (cooldown) */
     cooldownMs: number;
@@ -980,7 +980,7 @@ export const DEFAULT_CONFIG: BrainAgentConfig = {
     maxPagesPerQuery: 2,
     maxPageChars: 8_000,
     maxTotalChars: 24_000,
-    extractMaxTokens: 800,
+    extractMaxTokens: 1600,
     cooldownMs: 300_000, // 5 minutes between research cycles
     blockedToolsInAutonomous: ["web_search", "web_fetch", "exec"],
   },

@@ -29,6 +29,11 @@
  * недостаточно: она опиралась на общие знания, а не на найденные факты.
  * v0.9.25: инструкция блока учитывает состояние гейта инструментов —
  * запрет повторного поиска действует, только когда поиск заблокирован.
+ *
+ * v0.9.26: устойчивость к обрезанному ответу извлекающей модели —
+ * целые факты спасаются из неполного JSON (salvageExtraction), лимит
+ * токенов извлечения поднят с 800 до 1600 (рассуждающие модели тратят
+ * бюджет на рассуждение до текста).
  */
 
 import { readFileSync } from "node:fs";
@@ -191,6 +196,55 @@ function readDeepSeekKeyFromCredentialsStore(): string | null {
   } catch {
     return null; // стора нет или не читается — тихо пропускаем
   }
+}
+
+/**
+ * v0.9.26: извлекающая модель может оборвать JSON на лимите токенов
+ * (особенно рассуждающая — бюджет уходит на рассуждение до текста).
+ * Спасаем целые объекты фактов {"content", "category"} — оба порядка
+ * ключей, с разэкранированием — и полную строку "summary"; недописанный
+ * хвост отбрасываем. Совсем не-JSON вернёт пустой результат.
+ */
+export function salvageExtraction(raw: string): {
+  facts: Array<{ content: string; category: string }>;
+  summary: string;
+} {
+  const unescapeJson = (s: string): string => {
+    try {
+      return JSON.parse(`"${s}"`) as string;
+    } catch {
+      return s;
+    }
+  };
+
+  const facts: Array<{ content: string; category: string }> = [];
+  const seen = new Set<string>();
+
+  const RE_CONTENT_FIRST =
+    /\{\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"category"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}/g;
+  const RE_CATEGORY_FIRST =
+    /\{\s*"category"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}/g;
+
+  const collect = (re: RegExp, swapped: boolean): void => {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) {
+      const content = swapped ? unescapeJson(m[2]) : unescapeJson(m[1]);
+      const category = swapped ? unescapeJson(m[1]) : unescapeJson(m[2]);
+      const key = content.trim().toLowerCase();
+      if (content.length > 5 && !seen.has(key)) {
+        seen.add(key);
+        facts.push({ content, category });
+      }
+    }
+  };
+  collect(RE_CONTENT_FIRST, false);
+  collect(RE_CATEGORY_FIRST, true);
+
+  // summary берём, только если строка полностью закрыта кавычкой
+  const sumMatch = raw.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const summary = sumMatch ? unescapeJson(sumMatch[1]) : "";
+
+  return { facts, summary };
 }
 
 // ── Instance type ─────────────────────────────────────────────────
@@ -815,11 +869,12 @@ export function createAutonomousResearch(
     let facts: Array<{ content: string; category: string }> = [];
     let summary = "";
 
+    const cleaned = result
+      .replace(/```json?\s*/g, "")
+      .replace(/```/g, "")
+      .trim();
+
     try {
-      const cleaned = result
-        .replace(/```json?\s*/g, "")
-        .replace(/```/g, "")
-        .trim();
       const parsed = JSON.parse(cleaned) as {
         facts?: Array<{ content: string; category: string }>;
         summary?: string;
@@ -829,9 +884,20 @@ export function createAutonomousResearch(
       );
       summary = typeof parsed.summary === "string" ? parsed.summary : "";
     } catch {
-      // If JSON parsing fails, use the raw result as summary
-      summary = result.slice(0, 500);
-      deps.logger.info("BrainAgent AutonomousResearch: extraction JSON parse failed, using raw");
+      // v0.9.26: JSON может быть обрезан лимитом токенов (особенно на
+      // рассуждающих моделях) — спасаем целые факты из неполного ответа.
+      const salvaged = salvageExtraction(cleaned);
+      facts = salvaged.facts;
+      summary = salvaged.summary;
+      if (facts.length > 0) {
+        deps.logger.info(
+          `BrainAgent AutonomousResearch: truncated JSON salvaged — ${facts.length} facts recovered`,
+        );
+      } else {
+        // Совсем не похоже на факты — как раньше, сырой текст в сводку
+        summary = result.slice(0, 500);
+        deps.logger.info("BrainAgent AutonomousResearch: extraction JSON parse failed, using raw");
+      }
     }
 
     // Store facts in hippocampus
