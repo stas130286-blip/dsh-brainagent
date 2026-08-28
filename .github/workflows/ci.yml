@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Typecheck, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Wildcard dependencies resolve against the dsh host packages; peers are
+      # provided by the host at runtime, and plain `npm install` hits ERESOLVE
+      # across mismatched prerelease trains — install leniently.
+      - name: Install
+        run: npm install --legacy-peer-deps
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
