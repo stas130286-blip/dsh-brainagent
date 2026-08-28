@@ -25,3 +25,11 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      # Закоммиченный бандл обязан совпадать со свежей сборкой: если этот
+      # шаг падает — кто-то забыл пересобрать lib/index.js перед пушем.
+      - name: Verify committed bundle
+        run: git diff --exit-code lib/index.js
+      # Текстовые файлы обязаны быть чистым UTF-8: без символов замены и
+      # маркеров латиничной кракозябры. Бережёт от аварий кодировки редактора.
+      - name: Encoding sanity
+        run: node scripts/check-encoding.cjs
