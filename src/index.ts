@@ -199,6 +199,10 @@ export function apply(ctx: Context, config: Config) {
   // durable session log ("model-visible means logged").
   const state = createAutonomyState();
 
+  // v0.9.27: висящие таймеры ретраев доставки (учтены, чистятся при
+  // выгрузке плагина — ретрай не должен стрелять после teardown).
+  const pendingDeliveryRetries = new Set<ReturnType<typeof setTimeout>>();
+
   function pickAgent(): Agent | undefined {
     const agents = ctx.agents.list();
     if (agents.length === 0) return undefined;
@@ -230,8 +234,11 @@ export function apply(ctx: Context, config: Config) {
           `BrainAgent Autonomy: delivery deferred — ${(error as Error).message}`,
         );
         // Ограниченный ретрай: reentry в запись сессии обычно кратковременный.
+        // v0.9.27: таймеры учитываются в pendingDeliveryRetries — teardown
+        // чистит их, и ретрай не сработает после выгрузки плагина.
         const retryDelivery = (attempt: number) => {
-          setTimeout(() => {
+          const timer = setTimeout(() => {
+            pendingDeliveryRetries.delete(timer);
             try {
               agent.followup(message);
             } catch (retryError) {
@@ -244,6 +251,7 @@ export function apply(ctx: Context, config: Config) {
               }
             }
           }, 25 * attempt);
+          pendingDeliveryRetries.add(timer);
         };
         retryDelivery(1);
       }
@@ -254,6 +262,11 @@ export function apply(ctx: Context, config: Config) {
     // v0.9.20: спонтанные инициативы проходят таламический фильтр
     // активации (приоритетные напоминания обходят его в деливерере).
     thalamic: brainConfig.modules.thalamicGate ? { shouldActivateCortex } : undefined,
+  });
+  // v0.9.27: при выгрузке гасим висящие ретраи доставки.
+  disposers.push(() => {
+    for (const timer of pendingDeliveryRetries) clearTimeout(timer);
+    pendingDeliveryRetries.clear();
   });
 
   const driveGetters = (): DriveGetters => ({
