@@ -138,7 +138,7 @@ describe("Temporal Awareness", () => {
   // ── Event emission ──────────────────────────────────────────
 
   describe("event emission", () => {
-    it("emits temporal:frequent-engagement at high density", () => {
+    it("emits temporal:frequent-engagement at high density", async () => {
       const events: Array<{ density: number }> = [];
       initTemporalAwareness(
         tempDir,
@@ -156,9 +156,13 @@ describe("Temporal Awareness", () => {
         events.push(data as { density: number });
       });
 
-      // Record enough interactions to trigger
+      // Record enough interactions to trigger. Пауза между записями
+      // обязательна: плотность считается по размаху окна, и если все
+      // метки лягут в одну миллисекунду (быстрые CI-раннеры), размах
+      // будет нулевым и событие не родится.
       for (let i = 0; i < 5; i++) {
         recordInteraction();
+        await new Promise((resolve) => setTimeout(resolve, 5));
       }
 
       expect(events.length).toBeGreaterThan(0);
