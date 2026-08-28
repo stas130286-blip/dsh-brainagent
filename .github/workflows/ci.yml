@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
       # Wildcard dependencies resolve against the dsh host packages; peers are
       # provided by the host at runtime, and plain `npm install` hits ERESOLVE
       # across mismatched prerelease trains — install leniently.
