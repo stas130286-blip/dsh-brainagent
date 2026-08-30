@@ -32,6 +32,10 @@
     "type": "git",
     "url": "https://github.com/stas130286-blip/dsh-brainagent.git"
   },
+  "homepage": "https://github.com/stas130286-blip/dsh-brainagent#readme",
+  "bugs": {
+    "url": "https://github.com/stas130286-blip/dsh-brainagent/issues"
+  },
   "dependencies": {
     "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/schemastery": "*"
