@@ -92,6 +92,28 @@ describe("isResearchIntent", () => {
   it("returns false for goal: with no prompt", () => {
     expect(isResearchIntent("goal:abc123")).toBe(false);
   });
+
+  // v0.9.28: органические желания (id desire_<ts>_<n>) должны попадать
+  // в исследование по ключевым словам текста, как цели.
+  it("returns true for organic desire: with research keywords (v0.9.28)", () => {
+    expect(
+      isResearchIntent(
+        "desire:desire_1788654356_3",
+        'Узнать больше о "квантовые компьютеры" (пробел в знаниях, встречался 5 раз)',
+      ),
+    ).toBe(true);
+    expect(isResearchIntent("desire:desire_1_1", "Need to research AI safety")).toBe(true);
+    expect(isResearchIntent("desire:desire_1_1", "Хочу изучить тему сна")).toBe(true);
+  });
+
+  it("returns false for organic desire: without research keywords", () => {
+    expect(isResearchIntent("desire:desire_1_1", "Напомнить о прогулке")).toBe(false);
+    expect(isResearchIntent("desire:desire_1_1", "Share a background thought")).toBe(false);
+  });
+
+  it("returns false for desire: with no prompt", () => {
+    expect(isResearchIntent("desire:desire_1_1")).toBe(false);
+  });
 });
 
 describe("getAutonomousResearchStats", () => {

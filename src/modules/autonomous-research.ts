@@ -131,8 +131,11 @@ export function isResearchIntent(source: string, promptText?: string): boolean {
     if (source.startsWith(prefix)) return true;
   }
 
-  // Goal-based: check if goal prompt contains research keywords
-  if (source.startsWith("goal:") && promptText) {
+  // v0.9.28: органические желания несут id вида desire_<ts>_<n>, поэтому
+  // источник намерения (desire:desire_*) никогда не совпадает с префиксом
+  // desire:understanding. Текст желания («Узнать больше о "X"») проверяем
+  // ключевыми словами — так же, как у целей.
+  if ((source.startsWith("goal:") || source.startsWith("desire:")) && promptText) {
     const lower = promptText.toLowerCase();
     return RESEARCH_KEYWORDS.some((kw) => lower.includes(kw));
   }

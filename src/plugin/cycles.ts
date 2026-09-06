@@ -609,7 +609,12 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
               addDesire(
                 "understanding",
                 `Узнать больше о "${gap.topic}" (пробел в знаниях, встречался ${gap.timesEncountered} раз)`,
-                Math.min(0.8, 0.4 + gap.timesEncountered * 0.1),
+                // v0.9.28: потолок 0.8 -> 0.95. Резолвер автономных
+                // намерений берёт желания только с strength >= 0.9 —
+                // со старым потолком желание любопытства никогда не
+                // могло запустить исследование (обрыв цепи). Шкала
+                // ступенчатая: 2 встречи = 0.6, 5 = 0.9 (порог), 6+ = 0.95.
+                Math.min(0.95, 0.4 + gap.timesEncountered * 0.1),
                 `curiosity:gap:${gap.id}`,
               );
               logger.info(
