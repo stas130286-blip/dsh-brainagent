@@ -1339,11 +1339,10 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     let contradictions = 0;
     let revised = 0;
 
-    // Intensity modulates thresholds:
-    // - Low intensity (0.1-0.3): only prune very weak memories, minimal merging
-    // - Medium intensity (0.4-0.6): standard consolidation
-    // - High intensity (0.7-1.0): aggressive pruning, more merging, deeper analysis
-    const pruneThreshold = 1.0 - intensity * 0.5; // 0.5-1.0 → higher = stricter
+    // Intensity modulates merging and the episodic capacity:
+    // - Low intensity (0.1-0.3): stricter matching, so fewer merges
+    // - High intensity (0.7-1.0): more merging and a stricter capacity limit.
+    // Forgetting itself is not intensity-driven: it follows trace strength.
     const mergeThreshold = 0.7 + (1 - intensity) * 0.2; // 0.7-0.9 → lower intensity = stricter
     const strengthenBonus = 0.05 + intensity * 0.1; // 0.05-0.15
 
