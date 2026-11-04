@@ -207,6 +207,8 @@ export type BrainState = {
     episodic: EpisodicMemory[];
     semantic: SemanticMemory[];
     procedural: ProceduralMemory[];
+    /** v0.9.38: базовое знание о пользователе — отдельный бюджет промпта. */
+    pinned?: SemanticMemory[];
   };
   /** Model override from prefrontal cortex */
   modelOverride?: string;

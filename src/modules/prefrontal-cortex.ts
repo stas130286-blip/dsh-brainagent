@@ -246,19 +246,55 @@ function buildUserContext(model: UserModel): string | undefined {
   return lines.join("\n");
 }
 
+/** Шаблонные сводки эпизодов — не несут информации, вместо них нужен event. */
+const TEMPLATE_SUMMARY_RE =
+  /^(?:Conversation about: .{0,40} topic|Proactive message \(.{0,40}\)|User response to autonomous agent message)$/u;
+
+/**
+ * Строка эпизода для промпта (v0.9.38).
+ * Боевой стор: 162 из 411 записей имели summary «Conversation about:
+ * unknown topic», и именно они уходили в промпт — модель читала три
+ * строки-заглушки и честно отвечала «не помню». Реальный текст лежит в
+ * event, поэтому шаблон заменяется началом события.
+ */
+export function episodeLabel(episode: EpisodicMemory): string {
+  const summary = (episode.summary ?? "").trim();
+  if (summary && !TEMPLATE_SUMMARY_RE.test(summary)) return summary;
+  const event = (episode.event ?? "").replace(/\s+/g, " ").trim();
+  if (!event) return summary || "(no details)";
+  return event.length > 160 ? `${event.slice(0, 157)}…` : event;
+}
+
 function buildMemoryContext(memories: {
   episodic: EpisodicMemory[];
   semantic: SemanticMemory[];
+  pinned?: SemanticMemory[];
 }): string | undefined {
   const lines: string[] = [];
+  const pinned = memories.pinned ?? [];
+
+  // v0.9.38: базовое знание о пользователе — отдельный блок со своим
+  // бюджетом. До этого пиннинг (до 5 фактов) стоял в начале того же
+  // списка, который затем резался slice(0, 5): релевантные факты не
+  // рендерились никогда, а слоты занимали пути к файлам.
+  if (pinned.length > 0) {
+    lines.push("## Core Knowledge About the User");
+    for (const fact of pinned) {
+      lines.push(`- ${fact.content}`);
+    }
+  }
 
   if (memories.semantic.length > 0) {
+    if (lines.length > 0) lines.push("");
     lines.push("## Known Facts About User/Context");
     for (const fact of memories.semantic.slice(0, 5)) {
       lines.push(
         `- [${fact.category}] ${fact.content} (confidence: ${(fact.confidence * 100).toFixed(0)}%)`,
       );
     }
+  }
+
+  if (pinned.length > 0 || memories.semantic.length > 0) {
     // v0.9.12: модель обязана считать эти факты СВОЕЙ памятью, а не
     // «подсказками контекста» — иначе честно их отрицает (боевой тест).
     lines.push(
@@ -272,10 +308,11 @@ function buildMemoryContext(memories: {
   }
 
   if (memories.episodic.length > 0) {
+    if (lines.length > 0) lines.push("");
     lines.push("## Recent Relevant Events");
     for (const ep of memories.episodic.slice(0, 3)) {
       const date = new Date(ep.timestamp).toLocaleDateString();
-      lines.push(`- [${date}] ${ep.summary}`);
+      lines.push(`- [${date}] ${episodeLabel(ep)}`);
     }
   }
 

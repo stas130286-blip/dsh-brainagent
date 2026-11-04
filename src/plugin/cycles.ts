@@ -323,9 +323,15 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
         state.previousCycleWasAutonomous = true;
       } else if (!isAutonomousCycle) {
         const summary = truncateText(input, 200);
+        // v0.9.38: домен часто не определяется (русский текст → "unknown"),
+        // и тогда сводка не говорила модели ничего. Запасной вариант —
+        // начало самой реплики.
+        const domain = cycle.classification?.domain;
         const episode = storeEpisode(
           `User asked: ${summary}`,
-          `Conversation about: ${cycle.classification?.domain ?? "unknown"} topic`,
+          domain && domain !== "unknown"
+            ? `Conversation about: ${domain} topic`
+            : `Conversation: ${truncateText(input, 60).replace(/\s+/g, " ")}`,
           emotion,
           cycle.classification ? [cycle.classification.domain] : [],
           intensity,

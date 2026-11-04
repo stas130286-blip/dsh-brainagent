@@ -22,8 +22,8 @@ import { detectReinforcementWithAI, findHabit, buildHabitContext } from "../modu
 import { deriveHabitSignature } from "../modules/habit-signature.ts";
 import { isAIProviderAvailable } from "../modules/ai-extractor.ts";
 import { getAttentionLevel, getNeuromodulatorState } from "../modules/dopamine-system.ts";
-import { recallAllAsync, getFactsByCategory } from "../modules/hippocampus.ts";
-import { pinIdentityFacts } from "../modules/memory-identity.ts";
+import { recallAllAsync, getAllFacts } from "../modules/hippocampus.ts";
+import { buildSelfDigest, isSelfQuery, selectPinnedFacts } from "../modules/memory-identity.ts";
 import { predict } from "../modules/predictive-engine.ts";
 import { buildNeuromodulatorContext } from "../modules/neural-pathways.ts";
 import { buildLearningContext, buildCapabilityContext } from "../modules/learning-coordinator.ts";
@@ -259,12 +259,21 @@ export function createPreStepHandler(deps: PreStepDeps) {
     // пользователя) — такое же базовое знание, как и имя: боевой тест
     // показал, что «Домашний сервер пользователя называется Атлас»
     // лежит в сторе, но не доезжает до модели сквозь топ-5 по сходству.
-    recalled.semantic = pinIdentityFacts(recalled.semantic, [
-      ...getFactsByCategory("user_info", 3),
-      ...getFactsByCategory("entity", 2),
-    ], 5);
+    // v0.9.38: пиннинг и релевантность — два независимых бюджета.
+    // Раньше «база» (до 5 фактов) вставала в начало списка, который затем
+    // резался slice(0, 5): релевантные факты не доезжали до модели вовсе.
+    // Боевой стор: 518 фактов, 89 про резюме, а в промпте пять строк, из
+    // них четыре — пути к файлам конвейера. Отбор теперь по важности
+    // (fact-importance), а вопрос о себе обслуживает дайджест, не сходство.
+    const allFacts = getAllFacts();
+    const pinnedFacts = isSelfQuery(input)
+      ? buildSelfDigest(allFacts)
+      : selectPinnedFacts(allFacts);
+    const pinnedIds = new Set(pinnedFacts.map((f) => f.id));
+    recalled.semantic = recalled.semantic.filter((f) => !pinnedIds.has(f.id));
     cyc.recalledMemoryIds = [
       ...recalled.episodic.map((m) => m.id),
+      ...pinnedFacts.map((m) => m.id),
       ...recalled.semantic.map((m) => m.id),
     ];
 
@@ -492,7 +501,7 @@ export function createPreStepHandler(deps: PreStepDeps) {
       input,
       classification: cyc.classification,
       priority: cyc.assessment,
-      relevantMemories: recalled,
+      relevantMemories: { ...recalled, pinned: pinnedFacts },
       contextInjections: filtered,
     };
 

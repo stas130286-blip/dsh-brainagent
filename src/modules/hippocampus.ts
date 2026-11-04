@@ -37,6 +37,7 @@ import type {
 } from "./types.ts";
 import { VectorIndex } from "./vector-engine.ts";
 import { atomicWrite, loadJsonFile, saveJsonFile } from "./persist.ts";
+import { isDurableFact } from "./fact-importance.ts";
 
 // ── Pure helpers (module-level, stateless) ──────────────────────────
 
@@ -193,6 +194,7 @@ export interface HippocampusInstance {
     embeddingResults?: Array<{ id: string; score: number }>,
   ): SemanticMemory[];
   getFactsByCategory(category: string, limit?: number): SemanticMemory[];
+  getAllFacts(): SemanticMemory[];
   storeWorkflow(description: string, triggerPattern: string, steps: string[]): ProceduralMemory;
   findMatchingWorkflow(input: string): ProceduralMemory | undefined;
   recordWorkflowOutcome(procId: string, success: boolean): void;
@@ -708,7 +710,10 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       (f) => f.content.toLowerCase() === content.toLowerCase() && f.category === category,
     );
     if (existing) {
-      existing.confidence = Math.min(1, existing.confidence + 0.1);
+      // v0.9.38: служебные факты (пути, ссылки, id) не набирают вес за
+      // повторные упоминания — иначе «Рабочая папка прогона» доходит до
+      // 1.00 и вытесняет из промпта содержательные факты о пользователе.
+      existing.confidence = Math.min(1, existing.confidence + (isDurableFact(content) ? 0.1 : 0.03));
       existing.updatedAt = Date.now();
       existing.sourceEpisodeIds = [...new Set([...existing.sourceEpisodeIds, ...sourceEpisodeIds])];
       // Re-index with updated content
@@ -724,7 +729,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       const nearDup = semanticStore.find((f) => f.id === similar[0].id);
       if (nearDup) {
         // Strengthen the existing near-duplicate instead of creating new
-        nearDup.confidence = Math.min(1, nearDup.confidence + 0.15);
+        nearDup.confidence = Math.min(1, nearDup.confidence + (isDurableFact(content) ? 0.15 : 0.05));
         nearDup.updatedAt = Date.now();
         nearDup.sourceEpisodeIds = [...new Set([...nearDup.sourceEpisodeIds, ...sourceEpisodeIds])];
         nearDup.relatedIds = [...new Set([...nearDup.relatedIds, ...relatedIds])];
@@ -1013,6 +1018,15 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     if (candidates.length === 0) return [];
     // Sort by confidence descending, return top N
     return [...candidates].sort((a, b) => b.confidence - a.confidence).slice(0, limit);
+  }
+
+  /**
+   * Весь корпус фактов без ранжирования (v0.9.38).
+   * Пиннингу и дайджесту нужен полный набор: getFactsByCategory отдаёт
+   * топ по confidence, а именно этот критерий и забивал слоты путями.
+   */
+  function getAllFacts(): SemanticMemory[] {
+    return [...semanticStore];
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1628,6 +1642,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     getRevisionHistory,
     recallFacts,
     getFactsByCategory,
+    getAllFacts,
     storeWorkflow,
     findMatchingWorkflow,
     recordWorkflowOutcome,
@@ -1782,6 +1797,10 @@ export function recallFacts(
 
 export function getFactsByCategory(category: string, limit = 10): SemanticMemory[] {
   return current().getFactsByCategory(category, limit);
+}
+
+export function getAllFacts(): SemanticMemory[] {
+  return current().getAllFacts();
 }
 
 export function storeWorkflow(
