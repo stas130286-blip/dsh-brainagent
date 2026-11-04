@@ -97,6 +97,14 @@ const NEGATION_PAIRS: Array<[RegExp, RegExp]> = [
   [/\bcan\b/i, /\bcannot\b|\bcan't\b/i],
 ];
 
+/**
+ * Порог забывания: сила следа, ниже которой эпизод больше не всплывает.
+ * Возраст здесь не участвует — он уже учтён в salience через затухание.
+ * При decay 0.95/сутки след 0.8 опускается до порога примерно за 85 дней
+ * без единого вспоминания; частота вспоминаний и задаёт реальный срок жизни.
+ */
+const FORGET_SALIENCE_THRESHOLD = 0.01;
+
 const CONSOLIDATION_PROMPT = `Ты — модуль консолидации памяти. Тебе даётся список фактов (формат: id: содержание [категория]).
 
 Задачи:
@@ -262,6 +270,9 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
 
   /** Incremented on every semantic store mutation; used by dream-mode to skip redundant AI reviews. */
   let semanticVersion = 0;
+
+  /** When the previous consolidation pass finished — the replay window for strengthening. */
+  let lastConsolidationAt = Date.now();
 
   // ── Vector indices (one per memory layer) ─────────────────────────
   const episodicIndex = new VectorIndex();
@@ -597,6 +608,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       entities,
       salience: baseSalience,
       accessCount: 0,
+      lastDecayedAt: Date.now(),
     };
     episodicStore.push(episode);
 
@@ -674,6 +686,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     for (const ep of results) {
       ep.accessCount++;
       ep.salience = Math.min(1, ep.salience + 0.05);
+      ep.lastAccessedAt = Date.now();
     }
     if (results.length > 0) persistEpisodic();
 
@@ -1335,34 +1348,80 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     const strengthenBonus = 0.05 + intensity * 0.1; // 0.05-0.15
 
     // 1. Decay salience on episodic memories
+    // Затухание начисляется за время с прошлого прохода, а не с момента
+    // создания: иначе decay^(возраст) умножается на каждом проходе и
+    // накапливается (за сутки при интервале 120 мин выходило 0.95^6.5 ≈ 0.57).
+    const now = Date.now();
     const decayFactor = config.memory.salienceDecayFactor;
-    for (const ep of episodicStore) {
-      const daysSince = (Date.now() - ep.timestamp) / (24 * 60 * 60 * 1000);
-      ep.salience *= decayFactor ** daysSince;
+
+    // v0.9.35: legacy-эпизоды хранят salience, испорченный тем же компаундингом.
+    // Восстанавливаем силу следа от возраста по исправленной формуле и начинаем
+    // новый отсчёт. База 0.8 — нижняя оценка: эмоциональный буст не сохранён.
+    const legacy = episodicStore.filter((ep) => ep.lastDecayedAt === undefined);
+    if (legacy.length > 0) {
+      if (memoryDir) {
+        const archivePath = join(memoryDir, "episodic", "store.legacy-v1.json");
+        if (!existsSync(archivePath)) saveJson(archivePath, episodicStore);
+      }
+      for (const ep of legacy) {
+        const ageDays = (now - ep.timestamp) / (24 * 60 * 60 * 1000);
+        ep.salience = Math.min(1, 0.8 * decayFactor ** ageDays);
+        ep.lastDecayedAt = now;
+      }
+      logger?.info(
+        `BrainAgent Consolidation: пересчитана сила следа у ${legacy.length} эпизодов (исправление компаундинга)`,
+      );
     }
 
-    // 2. Prune low-salience episodic memories that exceed limit
-    // Higher intensity = more aggressive limit (prune more)
+    for (const ep of episodicStore) {
+      const since = ep.lastDecayedAt ?? ep.timestamp;
+      const elapsedDays = (now - since) / (24 * 60 * 60 * 1000);
+      if (elapsedDays > 0) ep.salience *= decayFactor ** elapsedDays;
+      ep.lastDecayedAt = now;
+    }
+
+    // 2. Forget traces whose strength fell below the threshold.
+    // Возраст не проверяется: он уже учтён в salience через затухание.
+    // След ниже порога всё равно не всплывает — его вклад в score ~0.
+    const forgotten = episodicStore.filter((ep) => ep.salience < FORGET_SALIENCE_THRESHOLD);
+    if (forgotten.length > 0) {
+      for (const ep of forgotten) episodicIndex.remove(ep.id);
+      episodicStore = episodicStore.filter((ep) => ep.salience >= FORGET_SALIENCE_THRESHOLD);
+      pruned += forgotten.length;
+      logger?.info(
+        `BrainAgent Consolidation: забыто по силе следа — ${forgotten.length} эпизодов (salience < ${FORGET_SALIENCE_THRESHOLD})`,
+      );
+    }
+
+    // 3. Prune episodic memories that exceed capacity
+    // Higher intensity = more aggressive limit (prune more).
+    // При равной силе выживает более используемый, затем более свежий след.
     const effectiveMaxEpisodic = Math.floor(
       config.memory.maxEpisodicMemories * (1.1 - intensity * 0.2),
     );
     if (episodicStore.length > effectiveMaxEpisodic) {
-      episodicStore.sort((a, b) => b.salience - a.salience);
+      episodicStore.sort(
+        (a, b) =>
+          b.salience - a.salience ||
+          b.accessCount - a.accessCount ||
+          b.timestamp - a.timestamp,
+      );
       const removed = episodicStore.splice(effectiveMaxEpisodic);
       for (const r of removed) episodicIndex.remove(r.id);
       pruned += removed.length;
     }
 
-    // 3. Strengthen frequently accessed memories
-    // Higher intensity = more strengthening bonus
+    // 4. Replay strengthening: подкрепляются только следы, всплывшие между
+    // проходами (гиппокампальный replay), а не всё, что когда-либо видели
+    // больше трёх раз — иначе бонус каждый проход прибивал их к 1 навсегда.
     for (const ep of episodicStore) {
-      if (ep.accessCount > 3) {
+      if (ep.lastAccessedAt !== undefined && ep.lastAccessedAt >= lastConsolidationAt) {
         ep.salience = Math.min(1, ep.salience + strengthenBonus);
         strengthened++;
       }
     }
 
-    // 4. Merge duplicate/near-duplicate semantic facts via vector similarity
+    // 5. Merge duplicate/near-duplicate semantic facts via vector similarity
     // Higher intensity = lower similarity threshold (more merging)
     const toRemoveIds = new Set<string>();
     for (let i = 0; i < semanticStore.length; i++) {
@@ -1388,7 +1447,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     for (const id of toRemoveIds) semanticIndex.remove(id);
     semanticStore = semanticStore.filter((f) => !toRemoveIds.has(f.id));
 
-    // 5. Cap semantic store size
+    // 6. Cap semantic store size
     if (semanticStore.length > config.memory.maxSemanticMemories) {
       semanticStore.sort((a, b) => b.confidence - a.confidence);
       const removed = semanticStore.splice(config.memory.maxSemanticMemories);
@@ -1396,7 +1455,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       pruned += removed.length;
     }
 
-    // 6. Prune unused procedural memories
+    // 7. Prune unused procedural memories
     const procCutoffMs = 30 * 24 * 60 * 60 * 1000;
     const beforeLen = proceduralStore.length;
     const removedProcs = proceduralStore.filter(
@@ -1408,7 +1467,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     );
     pruned += beforeLen - proceduralStore.length;
 
-    // 7. AI-assisted semantic review (catches duplicates/contradictions TF-IDF misses)
+    // 8. AI-assisted semantic review (catches duplicates/contradictions TF-IDF misses)
     if (
       !skipAIReview &&
       neuroClawConfig &&
@@ -1524,6 +1583,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     }
 
     // Persist all changes
+    lastConsolidationAt = now;
     persistEpisodic();
     persistSemantic();
     persistProcedural();

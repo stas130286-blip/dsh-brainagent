@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  consolidate,
   initMemoryStorage,
   storeFact,
   storeEpisode,
@@ -145,5 +146,135 @@ describe("Hippocampus — v0.9.20: эмоционально-согласован
     const all = recallAll("новость", 5, 5, bonus);
     expect(all.episodic.length).toBeGreaterThan(0);
     expect(getEmotionalMemoryStats().emotionMatchBoosts).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("Hippocampus — v0.9.35: забывание по силе следа", () => {
+  let dir: string;
+  const storePath = (): string => join(dir, ".brainagent", "memory", "episodic", "store.json");
+  const readStore = (): Array<Record<string, unknown>> =>
+    JSON.parse(readFileSync(storePath(), "utf8")) as Array<Record<string, unknown>>;
+  const writeStore = (data: unknown): void => {
+    writeFileSync(storePath(), JSON.stringify(data, null, 2), "utf8");
+  };
+  const DAY = 24 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "brainagent-hippo-forget-"));
+    initMemoryStorage(dir);
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
+  });
+
+  it("начисляет затухание за прошедшее время, а не накапливает его", async () => {
+    storeEpisode("Прогон тестов", "прогон тестов");
+    const store = readStore();
+    const tenDaysAgo = Date.now() - 10 * DAY;
+    store[0].timestamp = tenDaysAgo;
+    store[0].lastDecayedAt = tenDaysAgo;
+    store[0].salience = 0.8;
+    writeStore(store);
+
+    initMemoryStorage(dir);
+    await consolidate(DEFAULT_CONFIG);
+
+    const [episode] = readStore();
+    // Компаундинг (decay^возраст на каждом проходе) оставил бы здесь ~1e-5.
+    expect(episode.salience as number).toBeCloseTo(0.8 * Math.pow(0.95, 10), 3);
+  });
+
+  it("забывает слабый след, не глядя на возраст, и хранит сильный старый", async () => {
+    storeEpisode("Слабый след", "слабый");
+    storeEpisode("Сильный след", "сильный");
+    const now = Date.now();
+    const store = readStore();
+    store[0].salience = 0.005; // молодой, но уже мёртвый
+    store[0].timestamp = now - DAY;
+    store[0].lastDecayedAt = now;
+    store[1].salience = 0.5; // старый, но живой
+    store[1].timestamp = now - 200 * DAY;
+    store[1].lastDecayedAt = now;
+    writeStore(store);
+
+    initMemoryStorage(dir);
+    await consolidate(DEFAULT_CONFIG);
+
+    expect(readStore().map((e) => e.summary)).toEqual(["сильный"]);
+  });
+
+  it("при переполнении вытесняет менее используемый след", async () => {
+    for (let i = 0; i < 4; i++) storeEpisode(`Событие ${i}`, `событие ${i}`);
+    const now = Date.now();
+    const store = readStore();
+    store.forEach((ep, i) => {
+      ep.salience = 0.5;
+      ep.accessCount = i;
+      ep.lastDecayedAt = now;
+    });
+    writeStore(store);
+
+    initMemoryStorage(dir);
+    const config = {
+      ...DEFAULT_CONFIG,
+      memory: { ...DEFAULT_CONFIG.memory, maxEpisodicMemories: 3 },
+    };
+    await consolidate(config);
+
+    const left = readStore();
+    expect(left).toHaveLength(3);
+    expect(left.map((e) => e.accessCount).sort()).toEqual([1, 2, 3]);
+  });
+
+  it("подкрепляет только следы, всплывшие между проходами, а не по счётчику доступов", async () => {
+    storeEpisode("Кварцевая жила", "кварц");
+    storeEpisode("Базальтовый слой", "базальт");
+    const now = Date.now();
+    const store = readStore();
+    store[0].salience = 0.3;
+    store[0].lastDecayedAt = now;
+    store[0].lastAccessedAt = now - 7 * DAY;
+    store[1].salience = 0.3;
+    store[1].lastDecayedAt = now;
+    store[1].accessCount = 50; // старый счётчик больше ничего не даёт
+    store[1].lastAccessedAt = now - 7 * DAY;
+    writeStore(store);
+
+    initMemoryStorage(dir);
+    await consolidate(DEFAULT_CONFIG);
+
+    const afterFirst = readStore();
+    expect(afterFirst[0].salience as number).toBeCloseTo(0.3, 3);
+    expect(afterFirst[1].salience as number).toBeCloseTo(0.3, 3);
+
+    recallEpisodes("кварц", 1); // след всплыл уже после прохода
+    await consolidate(DEFAULT_CONFIG);
+
+    const afterSecond = readStore();
+    expect(afterSecond[0].salience as number).toBeGreaterThan(0.35);
+    expect(afterSecond[1].salience as number).toBeCloseTo(0.3, 3);
+  });
+
+  it("миграция пересчитывает испорченную силу следа и сохраняет архив", async () => {
+    storeEpisode("Старый след", "старый");
+    const store = readStore();
+    store[0].timestamp = Date.now() - 30 * DAY;
+    store[0].salience = 1e-7;
+    delete store[0].lastDecayedAt;
+    writeStore(store);
+
+    initMemoryStorage(dir);
+    await consolidate(DEFAULT_CONFIG);
+
+    const [episode] = readStore();
+    expect(episode.salience as number).toBeCloseTo(0.8 * Math.pow(0.95, 30), 2);
+    expect(
+      existsSync(join(dir, ".brainagent", "memory", "episodic", "store.legacy-v1.json")),
+    ).toBe(true);
   });
 });

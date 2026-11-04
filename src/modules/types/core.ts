@@ -132,6 +132,14 @@ export type EpisodicMemory = {
   salience: number;
   /** How many times this was recalled (strengthens on access) */
   accessCount: number;
+  /** When this trace was last recalled — the replay-strengthening window (v0.9.35) */
+  lastAccessedAt?: number;
+  /**
+   * When salience was last decayed. Decay is charged for the time elapsed since
+   * this moment, not since creation — otherwise decay^age compounds on every
+   * consolidation pass (v0.9.35).
+   */
+  lastDecayedAt?: number;
 };
 
 export type SemanticMemory = {
