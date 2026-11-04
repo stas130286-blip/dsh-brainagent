@@ -30,7 +30,7 @@ import {
   AUTONOMY_PRIORITY_PREFIX,
 } from "./config.ts";
 import { AUTONOMY_MEMORIES_PREFIX } from "../modules/autonomy-markers.ts";
-import { recordGoalExecution } from "../modules/goal-executor.ts";
+import { recordGoalCheck, recordGoalExecution } from "../modules/goal-executor.ts";
 
 // ── Shared mutable state ────────────────────────────────────────────
 
@@ -373,6 +373,8 @@ export function createAutonomousIntentResolver(deps: IntentResolverDeps): () => 
     // 1. Social goals with recurring intervals (user asked the agent
     //    to do something periodically, e.g. "check the forum").
     if (brainConfig.modules.goalStack && deps.goalStack) {
+      // v0.9.32: каждая проходка резолвера — это реальная проверка стека.
+      recordGoalCheck();
       const stats = deps.goalStack.getGoalStackStats();
       if (stats.pending > 0) {
         const idleMs = brainConfig.circadian.enabled

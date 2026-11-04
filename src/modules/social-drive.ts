@@ -81,7 +81,6 @@ export function createSocialDrive(
       desireDescription: "Feeling the urge to connect with someone or check in on social circles",
       factsCategory: "relationship",
       fallbackTopic: "social connections and interactions with others",
-      firedBaseBoost: 0.3,
       urgeTimeField: "timeSinceLastSocial",
       legacyKeys: {
         lastInteraction: "lastSocialInteractionTime",

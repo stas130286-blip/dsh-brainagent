@@ -81,7 +81,6 @@ export function createCreativeDrive(
       desireDescription: "Feeling the urge to create something, explore novel ideas or express imagination",
       factsCategory: "creative",
       fallbackTopic: "creative expression, imagination and novel ideas",
-      firedBaseBoost: 0.25,
       urgeTimeField: "timeSinceLastCreation",
       legacyKeys: {
         lastInteraction: "lastCreativeInteractionTime",

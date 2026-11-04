@@ -103,8 +103,6 @@ export type DriveEngineSpec = {
   fallbackTopic: string;
   /** Канонический источник тем DMN (приоритетнее fallbackTopic), если фактов нет */
   topicProvider?: () => Array<{ topic: string }>;
-  /** Базовый буст насыщения при vital-impulse:fired */
-  firedBaseBoost: number;
   /** Имя поля времени в payload urge-события (совместимость слушателей) */
   urgeTimeField: string;
   /** Имена полей state-файла 0.1.1 (прозрачная миграция при загрузке) */
@@ -227,16 +225,19 @@ export class DriveEngine {
       }),
     );
 
-    // Срабатывание Витального Импульса — безусловный буст, нарастающий
-    // с каждым подряд срабатыванием без ответа пользователя
+    // v0.9.32: срабатывание импульса — это «позыв», а не «еда».
+    // Биологически сигнал потребности её не насыщает: голодный человек,
+    // подумав о еде, становится голоднее, а не сытее. Насыщение приходит
+    // только через консуммацию — реальное действие: ответ пользователя
+    // (dopamine:reward), обучение, инсайт, завершённое исследование.
+    // Прежний безусловный буст 0.25–0.8 каждому драйву на каждое
+    // срабатывание держал насыщение на 97–98% и навсегда закрывал
+    // автономный контур: drive-интентов не было ни одного.
+    // Затухание по-прежнему оценивается здесь on-demand — импульс
+    // остаётся редким, но надёжным тиком для decay.
     this.unsubscribers.push(
-      bus.on("vital-impulse:fired", (data) => {
+      bus.on("vital-impulse:fired", () => {
         this.evaluateDecay();
-        const consecutive = data.consecutiveFires ?? 0;
-        const baseBoost = this.spec.firedBaseBoost;
-        const escalation = Math.min(baseBoost * consecutive * 0.5, 0.5);
-        const totalBoost = Math.min(baseBoost + escalation, 0.8);
-        this.applySatiationDelta(totalBoost, { persist: true });
       }),
     );
   }

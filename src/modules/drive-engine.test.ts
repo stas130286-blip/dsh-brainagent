@@ -34,7 +34,6 @@ function makeSpec(overrides: Partial<DriveEngineSpec> = {}): DriveEngineSpec {
     desireDescription: "test urge",
     factsCategory: "relationship",
     fallbackTopic: "test topics",
-    firedBaseBoost: 0.3,
     urgeTimeField: "timeSinceLastTest",
     legacyKeys: {
       lastInteraction: "lastTestInteractionTime",
@@ -162,14 +161,16 @@ describe("DriveEngine", () => {
 
   // ── Витальный импульс ─────────────────────────────────────────
 
-  it("vital-impulse fires escalate satiation boost", () => {
+  it("vital-impulse fire is a pang, not a meal — satiation unchanged", () => {
     const { eng } = spawn();
     bus.emitSync("vital-impulse:fired", vitalFired(0));
-    expect(eng.getSatiation()).toBeCloseTo(0.8, 5); // 0.5 + 0.3
+    expect(eng.getSatiation()).toBeCloseTo(0.5, 5);
 
-    bus.emitSync("vital-impulse:fired", vitalFired(2));
-    // 0.3 + min(0.3×2×0.5, 0.5) = 0.6 → 0.8 + 0.6 → cap 1.0
-    expect(eng.getSatiation()).toBeCloseTo(1.0, 5);
+    // Повторные срабатывания без ответа пользователя тоже не «кормят»
+    // драйв: голод растёт только от затухания, падает — только от
+    // консуммации (награда, обучение, исследование).
+    bus.emitSync("vital-impulse:fired", vitalFired(3));
+    expect(eng.getSatiation()).toBeCloseTo(0.5, 5);
   });
 
   // ── Ручные бусты и дельты ─────────────────────────────────────

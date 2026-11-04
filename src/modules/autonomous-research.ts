@@ -40,6 +40,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import type { BrainAgentConfig } from "./types.ts";
+import { bus } from "./event-bus.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -910,6 +911,13 @@ export function createAutonomousResearch(
 
     stats.totalCycles++;
     stats.totalFactsExtracted += facts.length;
+
+    // v0.9.32: завершённое исследование — это «приём пищи» для когнитивного
+    // голода. Событие испускается только при реально усвоенных фактах: пустой
+    // прогон не должен насыщать потребность.
+    if (facts.length > 0) {
+      bus.emitSync("autonomous-research:stored", { topic, factsStored: facts.length });
+    }
 
     deps.logger.info(
       `BrainAgent AutonomousResearch: completed — ${facts.length} facts stored, ` +

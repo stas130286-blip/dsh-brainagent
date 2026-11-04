@@ -979,7 +979,12 @@ export function createCommandRegistry(): CommandRegistryInstance {
 
     if (goalStackStatsGetter && config.modules.goalStack) {
       const gs = goalStackStatsGetter();
-      lines.push("", "**Goal Stack:**", `  Pending: ${gs.pending}, Completed: ${gs.completed}`);
+      lines.push(
+        "",
+        "**Goal Stack:**",
+        `  Total: ${gs.total}, Pending: ${gs.pending}, Triggered: ${gs.triggered}`,
+        `  Completed: ${gs.completed}, Expired: ${gs.expired}`,
+      );
     }
 
     if (curiosityStatsGetter && config.modules.curiosityDrive) {

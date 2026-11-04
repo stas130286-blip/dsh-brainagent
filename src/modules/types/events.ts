@@ -61,6 +61,11 @@ export type BrainEventMap = {
   "learning:cycle-complete": LearningCycleReport;
   "learning:insight-discovered": LearningInsight;
 
+  // ── Autonomous research events ───────────────────────────────────
+  // v0.9.32: консуммация когнитивного голода — событие испускается только
+  // после того, как факты реально сохранены в память.
+  "autonomous-research:stored": { topic: string; factsStored: number };
+
   // ── Neural pathway events (cross-module) ─────────────────────────
   "pathway:habit-promoted": { source: string; habitId: string; confidence: number };
   "pathway:memory-reinforced": { source: string; memoryId: string; layer: MemoryLayer };

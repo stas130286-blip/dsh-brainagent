@@ -3,6 +3,7 @@ import {
   createGoalExecutor,
   getGoalExecutorStats,
   initGoalExecutor,
+  recordGoalCheck,
   recordGoalExecution,
   stopGoalExecutor,
 } from "./goal-executor.ts";
@@ -58,6 +59,43 @@ describe("v0.9.20: резолвер автономии учитывает исп
     expect(intent).not.toBeNull();
     expect(intent?.source).toBe("goal:g1");
     expect(getGoalExecutorStats().totalGoalsExecuted).toBe(1);
+    stopGoalExecutor();
+  });
+});
+
+describe("v0.9.32: честные счётчики проверок", () => {
+  it("recordCheck считает проверки и ставит heartbeat", () => {
+    initGoalExecutor(DEFAULT_CONFIG, noopLog);
+    recordGoalCheck();
+    recordGoalCheck();
+    const stats = getGoalExecutorStats();
+    expect(stats.totalChecks).toBe(2);
+    expect(stats.lastHeartbeatTime).toBeGreaterThan(0);
+    stopGoalExecutor();
+  });
+
+  it("до инициализации статистика нулевая", () => {
+    stopGoalExecutor();
+    const stats = getGoalExecutorStats();
+    expect(stats.totalChecks).toBe(0);
+    expect(stats.lastHeartbeatTime).toBe(0);
+  });
+
+  it("резолвер отмечает проверку стека даже без pending-целей", () => {
+    initGoalExecutor(DEFAULT_CONFIG, noopLog);
+    const resolver = createAutonomousIntentResolver({
+      state: createAutonomyState(),
+      brainConfig: DEFAULT_CONFIG,
+      drives: {},
+      goalStack: {
+        getGoalStackStats: () => ({ pending: 0 }),
+        checkAutonomousGoals: () => [],
+        buildGoalContext: () => undefined,
+        getDesires: () => [],
+      },
+    });
+    resolver();
+    expect(getGoalExecutorStats().totalChecks).toBe(1);
     stopGoalExecutor();
   });
 });

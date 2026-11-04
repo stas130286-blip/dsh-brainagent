@@ -85,7 +85,6 @@ export function createCognitiveHunger(
       // Драйв думает о реальных пробелах curiosity-drive (канонический
       // источник пробелов в знаниях), а не об общей запасной теме
       topicProvider: () => getOpenGaps().map((gap) => ({ topic: gap.topic })),
-      firedBaseBoost: 0.25,
       urgeTimeField: "timeSinceLastLearning",
       legacyKeys: {
         lastInteraction: "lastLearningInteractionTime",
@@ -138,6 +137,17 @@ export function createCognitiveHunger(
     bus.on("hippocampus:stored", () => {
       engine.evaluateDecay();
       engine.applySatiationDelta(0.02, { persist: true });
+    }),
+  );
+
+  // v0.9.32: консуммация познания. Голод снимает только реальный «приём
+  // пищи» — завершённое исследование, а не позыв к нему. Размер порции
+  // зависит от числа усвоенных фактов (0.15 + 0.05 за факт, потолок 0.5).
+  engine.addExtraListener(
+    bus.on("autonomous-research:stored", (data) => {
+      engine.evaluateDecay();
+      const meal = Math.min(0.5, 0.15 + 0.05 * data.factsStored);
+      engine.applySatiationDelta(meal, { persist: true });
     }),
   );
 
