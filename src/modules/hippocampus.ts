@@ -36,6 +36,7 @@ import type {
   SemanticMemory,
 } from "./types.ts";
 import { tokenize, VectorIndex } from "./vector-engine.ts";
+import { isSharedHistoryQuery } from "./memory-identity.ts";
 import { atomicWrite, loadJsonFile, saveJsonFile } from "./persist.ts";
 import { isDurableFact } from "./fact-importance.ts";
 
@@ -179,6 +180,93 @@ function makeWordPrefixes(tokens: Iterable<string>): Set<string> {
     if (token.length >= 4) prefixes.add(token.slice(0, 4));
   }
   return prefixes;
+}
+
+/**
+ * v0.9.40: служебные слова «о разговоре», а не о теме. «О чем мы писали»
+ * открывало шлюз по слову «писали», и в промпт шли сегодняшние реплики
+ * «и что мы в нем писали» вместо эпизодов по существу вопроса.
+ */
+const META_WORD_PREFIXES = [
+  "пис",
+  "говор",
+  "сказ",
+  "обсуд",
+  "разговар",
+  "рассказ",
+  "помн",
+  "вспомн",
+];
+
+function isMetaWord(token: string): boolean {
+  return META_WORD_PREFIXES.some((prefix) => token.startsWith(prefix));
+}
+
+/** Слова запроса, несущие тему. Если таких нет — работаем с полным набором. */
+function topicTokensOf(tokens: Set<string>): Set<string> {
+  const topic = new Set([...tokens].filter((t) => !isMetaWord(t)));
+  return topic.size > 0 ? topic : tokens;
+}
+
+/**
+ * v0.9.40: собственный вопрос — не воспоминание. Предыдущая реплика «так о
+ * чем мы писали рюзиме» ловится точным совпадением слов, занимает слот и
+ * вытесняет эпизоды по существу. Эхом считаем эпизод, почти целиком
+ * состоящий из слов текущего запроса.
+ */
+function isEchoOfQuery(queryTokens: Set<string>, text: string): boolean {
+  const docTokens = tokenize(text);
+  if (docTokens.length === 0) return false;
+  let inside = 0;
+  for (const token of docTokens) if (queryTokens.has(token)) inside++;
+  return inside / docTokens.length >= 0.8;
+}
+
+/** Расстояние Левенштейна с ранним выходом за пределы max. */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = new Array<number>(b.length + 1);
+  let curr = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > max) return max + 1;
+    const swap = prev;
+    prev = curr;
+    curr = swap;
+  }
+  return prev[b.length];
+}
+
+/**
+ * v0.9.40: второй проход — терпимость к опечаткам. «Рюзиме» и «резюме»
+ * расходятся на две замены. Первая буква обязана совпасть, иначе фаззи
+ * начнёт склеивать несвязанные слова («вечер» / «речер»).
+ *
+ * Возвращает силу совпадения, а не флаг: косинус по символьным n-граммам
+ * шумит, и по нему «Привет, Стас» обгоняет «Мы вчера начали с резюме».
+ */
+function fuzzyWordScore(queryTokens: Set<string>, text: string): number {
+  const docTokens = tokenize(text);
+  let best = 0;
+  for (const queryToken of queryTokens) {
+    if (queryToken.length < 5) continue;
+    for (const docToken of docTokens) {
+      if (docToken === queryToken) return 1;
+      if (docToken.length < 5 || docToken[0] !== queryToken[0]) continue;
+      const distance = editDistance(queryToken, docToken, 2);
+      if (distance > 2) continue;
+      const similarity = 1 - distance / Math.max(queryToken.length, docToken.length);
+      if (similarity > best) best = similarity;
+    }
+  }
+  return best;
 }
 
 export interface HippocampusInstance {
@@ -700,32 +788,62 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
     // без единого общего слова. Теперь свежесть только модулирует
     // сходство (0.6…1.0) и работает тай-брейком.
     const queryTokens = new Set(tokenize(query));
-    const queryPrefixes = makeWordPrefixes(queryTokens);
-    const scored = episodicStore.map((ep) => {
-      const tfidfScore = vectorScoreMap.get(ep.id) ?? 0;
-      const embScore = embScoreMap?.get(ep.id) ?? 0;
-      // If embeddings available: 60% embedding + 40% TF-IDF;
-      // If not: purely TF-IDF.
-      const relevance = embScoreMap ? embScore * 0.6 + tfidfScore * 0.4 : tfidfScore;
-      // Общее слово (в стеммированном виде) — единственный надёжный признак
-      // смысла: у n-граммного косинуса слишком высокий шумовой пол.
-      const wordHit = wordOverlap(
-        queryTokens,
-        queryPrefixes,
-        `${ep.event} ${ep.summary} ${ep.entities.join(" ")}`,
-      );
-      const recencyDays = (Date.now() - ep.timestamp) / (24 * 60 * 60 * 1000);
-      const recencyScore = 1 / (1 + recencyDays * 0.1);
-      // эмоц.-согласованный бонус: в «радостном» цикле радостные эпизоды
-      // всплывают легче (v0.9.20). Тоже множитель, не добавка.
-      const emotion = emotionBonus?.(ep.emotionalContext) ?? 0;
-      const freshness = 0.6 + recencyScore * 0.25 + ep.salience * 0.15 + emotion;
-      const found = wordHit || relevance >= RECALL_FUZZY_ONLY_GATE;
-      return { episode: ep, score: relevance * freshness, relevance, found };
+    const gateTokens = topicTokensOf(queryTokens);
+    const queryPrefixes = makeWordPrefixes(gateTokens);
+
+    type EpisodeScore = { episode: EpisodicMemory; score: number; relevance: number; found: boolean };
+    // Ярлык хода — не часть вопроса: по одной реплике и считаем эхо.
+    const stripLabel = (event: string): string =>
+      event.replace(/^(?:User|Agent)\s+(?:asked|proactively said|said):\s*/i, "");
+    // v0.9.40: собственный вопрос не воспоминание. Такой эпизод занимает слот
+    // и возвращает пользователю его же слова вместо ответа по существу.
+    // Мета-реплика («а ты помнишь?», «о чём мы писали?») не содержит
+    // содержания: она спрашивает, а не рассказывает. В пул воспоминаний
+    // такие ходы не идут — иначе они занимают слоты вместо ответа.
+    const pool = episodicStore.filter((ep) => {
+      const said = stripLabel(ep.event);
+      return !isEchoOfQuery(queryTokens, said) && !isSharedHistoryQuery(said);
     });
 
-    scored.sort((a, b) => b.score - a.score);
-    const selected = scored.filter((s) => s.found).slice(0, limit);
+    const buildScored = (
+      match: (text: string) => { hit: boolean; boost: number },
+    ): EpisodeScore[] =>
+      pool.map((ep) => {
+        const tfidfScore = vectorScoreMap.get(ep.id) ?? 0;
+        const embScore = embScoreMap?.get(ep.id) ?? 0;
+        // If embeddings available: 60% embedding + 40% TF-IDF;
+        // If not: purely TF-IDF.
+        const relevance = embScoreMap ? embScore * 0.6 + tfidfScore * 0.4 : tfidfScore;
+        const recencyDays = (Date.now() - ep.timestamp) / (24 * 60 * 60 * 1000);
+        const recencyScore = 1 / (1 + recencyDays * 0.1);
+        // эмоц.-согласованный бонус: в «радостном» цикле радостные эпизоды
+        // всплывают легче (v0.9.20). Тоже множитель, не добавка.
+        const emotion = emotionBonus?.(ep.emotionalContext) ?? 0;
+        const freshness = 0.6 + recencyScore * 0.25 + ep.salience * 0.15 + emotion;
+        const text = `${stripLabel(ep.event)} ${ep.summary} ${ep.entities.join(" ")}`;
+        const { hit, boost } = match(text);
+        const found = hit || relevance >= RECALL_FUZZY_ONLY_GATE;
+        return { episode: ep, score: (relevance + boost) * freshness, relevance, found };
+      });
+    const rank = (list: EpisodeScore[]): EpisodeScore[] =>
+      list
+        .filter((s) => s.found)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+
+    // Строгий проход: общее слово (с поправкой на стеммер) или сильное
+    // сходство. Фаззи по опечаткам включается только если он пуст.
+    let selected = rank(
+      buildScored((text) => ({ hit: wordOverlap(gateTokens, queryPrefixes, text), boost: 0 })),
+    );
+    if (selected.length === 0) {
+      selected = rank(
+        buildScored((text) => {
+          const strength = fuzzyWordScore(gateTokens, text);
+          return { hit: strength > 0, boost: strength };
+        }),
+      );
+    }
     const results = selected.map((s) => s.episode);
 
     // Hebb's rule: strengthen what was recalled *for a reason*. Подкреплять
@@ -1049,27 +1167,48 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
 
     const candidateIds = new Set(candidates.map((f) => f.id));
     const queryTokens = new Set(tokenize(query));
-    const queryPrefixes = makeWordPrefixes(queryTokens);
+    const gateTokens = topicTokensOf(queryTokens);
+    const queryPrefixes = makeWordPrefixes(gateTokens);
 
-    const scored = candidates.map((fact) => {
-      const tfidfScore = candidateIds.has(fact.id) ? (vectorScoreMap.get(fact.id) ?? 0) : 0;
-      const embScore = embScoreMap?.get(fact.id) ?? 0;
-      // If embeddings: 60% embedding + 40% TF-IDF; if not: purely TF-IDF.
-      const relevance = embScoreMap ? embScore * 0.6 + tfidfScore * 0.4 : tfidfScore;
-      // v0.9.39: уверенность модулирует сходство (0.7…1.0), а не добавляется
-      // к нему. Иначе факт с confidence 1.0 попадал в промпт на любой запрос:
-      // пути к файлам с накопленной уверенностью вытесняли релевантное.
-      const score = relevance * (0.7 + fact.confidence * 0.3);
-      const wordHit = wordOverlap(queryTokens, queryPrefixes, `${fact.content} ${fact.category}`);
-      const found = wordHit || relevance >= RECALL_FUZZY_ONLY_GATE;
-      return { fact, score, relevance, found };
-    });
+    type FactScore = { fact: SemanticMemory; score: number; relevance: number; found: boolean };
+    const buildScored = (
+      match: (text: string) => { hit: boolean; boost: number },
+    ): FactScore[] =>
+      candidates.map((fact) => {
+        const tfidfScore = candidateIds.has(fact.id) ? (vectorScoreMap.get(fact.id) ?? 0) : 0;
+        const embScore = embScoreMap?.get(fact.id) ?? 0;
+        // If embeddings: 60% embedding + 40% TF-IDF; if not: purely TF-IDF.
+        const relevance = embScoreMap ? embScore * 0.6 + tfidfScore * 0.4 : tfidfScore;
+        // v0.9.39: уверенность модулирует сходство (0.7…1.0), а не добавляется
+        // к нему. Иначе факт с confidence 1.0 попадал в промпт на любой запрос:
+        // пути к файлам с накопленной уверенностью вытесняли релевантное.
+        const text = `${fact.content} ${fact.category}`;
+        const { hit, boost } = match(text);
+        const found = hit || relevance >= RECALL_FUZZY_ONLY_GATE;
+        return {
+          fact,
+          score: (relevance + boost) * (0.7 + fact.confidence * 0.3),
+          relevance,
+          found,
+        };
+      });
+    const rank = (list: FactScore[]): SemanticMemory[] =>
+      list
+        .filter((s) => s.found)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map((s) => s.fact);
 
-    scored.sort((a, b) => b.score - a.score);
-    return scored
-      .filter((s) => s.found)
-      .slice(0, limit)
-      .map((s) => s.fact);
+    const strict = rank(
+      buildScored((text) => ({ hit: wordOverlap(gateTokens, queryPrefixes, text), boost: 0 })),
+    );
+    if (strict.length > 0) return strict;
+    return rank(
+      buildScored((text) => {
+        const strength = fuzzyWordScore(gateTokens, text);
+        return { hit: strength > 0, boost: strength };
+      }),
+    );
   }
 
   /**

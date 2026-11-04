@@ -67,6 +67,19 @@ export function isConversationQuery(input: string): boolean {
   return CONVERSATION_QUERY_RE.test(input);
 }
 
+/**
+ * v0.9.40: «о чём мы писали», «что мы обсуждали», «помнишь» — вопрос о
+ * совместной истории с пользователем, а не о теме. Ответ на него лежит не
+ * в эпизодах (там 200-символьные реплики), а в устойчивых фактах: что
+ * человек рассказывал о себе. Поэтому такой вопрос обслуживает дайджест.
+ */
+const SHARED_HISTORY_RE =
+  /о\s+ч[её]м\s+мы|что\s+мы\s+(?:писал|обсуж|говор)|помн[а-яё]*|вспомн[а-яё]*/iu;
+
+export function isSharedHistoryQuery(input: string): boolean {
+  return SHARED_HISTORY_RE.test(input);
+}
+
 /** Слоты базового знания на обычном ходу. */
 export const PINNED_FACT_SLOTS = 3;
 /** Слоты дайджеста на вопросе о себе. */

@@ -27,6 +27,7 @@ import {
   buildSelfDigest,
   isConversationQuery,
   isSelfQuery,
+  isSharedHistoryQuery,
   selectPinnedFacts,
 } from "../modules/memory-identity.ts";
 import { predict } from "../modules/predictive-engine.ts";
@@ -277,7 +278,11 @@ export function createPreStepHandler(deps: PreStepDeps) {
     // них четыре — пути к файлам конвейера. Отбор теперь по важности
     // (fact-importance), а вопрос о себе обслуживает дайджест, не сходство.
     const allFacts = getAllFacts();
-    const pinnedFacts = isSelfQuery(input)
+    // v0.9.40: «о чём мы писали в резюме» — тоже вопрос о себе, только с
+    // темой. Дайджест даёт то, чего в 200-символьных эпизодах нет: опыт,
+    // инструменты, должности.
+    const wantsSelfDigest = isSelfQuery(input) || isSharedHistoryQuery(input);
+    const pinnedFacts = wantsSelfDigest
       ? buildSelfDigest(allFacts)
       : selectPinnedFacts(allFacts);
     const pinnedIds = new Set(pinnedFacts.map((f) => f.id));
