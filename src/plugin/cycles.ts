@@ -23,6 +23,7 @@ import { observe } from "../modules/mirror-neurons.ts";
 import { observeInteraction } from "../modules/predictive-engine.ts";
 import { detectReinforcement, reinforce, recordPattern as recordBasalPattern } from "../modules/basal-ganglia.ts";
 import { deriveHabitSignature } from "../modules/habit-signature.ts";
+import { clearToolTrace, takeToolTrace } from "../modules/tool-trace.ts";
 import { startTrace, addTraceStep, completeTrace, reflectOnConsciousness } from "../modules/introspection.ts";
 import { resetCycleState } from "../modules/neural-pathways.ts";
 import { truncateForWorkingMemory, storeCompletedCycle } from "../modules/working-memory.ts";
@@ -159,6 +160,9 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
   let goalExtractionCounter = 0;
 
   function startCycle(key: string, text: string): CycleState {
+    // v0.9.34: новый ход начинается с чистого моторного следа.
+    clearToolTrace(key);
+
     // Refresh embedding provider in case credentials changed since boot.
     updateEmbeddingsConfig(getHostConfig());
 
@@ -400,7 +404,12 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
       // v0.9.33: ключ привычки — схема действия (тип задачи + домен),
       // а не текст сообщения: иначе привычки не могут повторяться.
       const signature = deriveHabitSignature(input, domain);
-      recordBasalPattern(signature.cue, signature.routine, domain);
+      // v0.9.34: мускульная память хранит действие, а не его описание —
+      // рутина пополняется фактическими инструментами этого хода.
+      const tools = takeToolTrace(key);
+      const routine =
+        !isAutonomousCycle && tools.length > 0 ? [signature.task, ...tools] : signature.routine;
+      recordBasalPattern(signature.cue, routine, domain);
     }
 
     // ── Dopamine: compute global reward and distribute to modules ──

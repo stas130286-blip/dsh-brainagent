@@ -42,7 +42,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, type LlmCallConfig } from "@deepseek-ai/dsh-llm";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 // Importing the tools package pulls in its `tools/pre-execute` event augmentation.
-import type { PreToolDecision } from "@deepseek-ai/dsh-tools";
+import type { PostToolDecision, PreToolDecision } from "@deepseek-ai/dsh-tools";
 // Importing the commands package pulls in the `ctx.commands` service augmentation.
 import "@deepseek-ai/dsh-commands";
 
@@ -130,6 +130,7 @@ import { isInternalPluginMessage, isHarnessSystemMessage } from "./modules/messa
 import { attachLlmBridge } from "./adapter/llm-bridge.ts";
 import { callLLM } from "./modules/llm-client.ts";
 import { registerBrainAgentCommands, setCommandStatGetters, buildStatusReport } from "./modules/commands.ts";
+import { noteToolUse } from "./modules/tool-trace.ts";
 import { classify } from "./modules/thalamus.ts";
 import { decideProcessingPath } from "./modules/prefrontal-cortex.ts";
 import { BRAINAGENT_SOURCE } from "./plugin/message-source.ts";
@@ -900,6 +901,18 @@ export function apply(ctx: Context, config: Config) {
         reason: `Tool "${exec.name}" is blocked during autonomous cycles. Research is handled via the isolated autonomous research pipeline to prevent token bloat.`,
       };
     }
+    return next();
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // tools/post-execute: моторный след хода (рутина привычки)
+  // ════════════════════════════════════════════════════════════
+  // v0.9.34: рутина привычки должна хранить реальные действия, а не
+  // только тип задачи. Пишем инструмент после выполнения — в рутину
+  // попадает то, что действительно произошло.
+  ctx.on("tools/post-execute", async (exec, _result, next): Promise<PostToolDecision> => {
+    const agentId = exec.agent ? String(exec.agent.id) : state.lastActiveAgentId;
+    if (agentId) noteToolUse(agentId, exec.name);
     return next();
   });
 

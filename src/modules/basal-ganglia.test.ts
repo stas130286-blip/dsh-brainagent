@@ -339,3 +339,37 @@ describe("Basal Ganglia v0.9.33: сигнатура привычки", () => {
     expect(getBasalStats().totalHabits).toBe(0);
   });
 });
+
+// ── v0.9.34: рутина из фактических инструментов ──────────────────────
+
+describe("Basal Ganglia v0.9.34: рутина хода", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "brainagent-basal-v3-"));
+    initBasalStorage(dir);
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
+  });
+
+  it("длинная рутина с инструментами вытесняет короткую", () => {
+    const habit = recordPattern("deploy:technical", ["deploy", "technical"], "technical");
+    recordPattern("deploy:technical", ["deploy", "read_file", "apply_patch", "run_tests"], "technical");
+
+    expect(habit.routine).toEqual(["deploy", "read_file", "apply_patch", "run_tests"]);
+    const ctx = buildHabitContext({ habit, matchScore: 1, autoExecute: false });
+    expect(ctx).toContain("read_file → apply_patch → run_tests");
+  });
+
+  it("короткая рутина не затирает выученную последовательность", () => {
+    const habit = recordPattern("fix:technical", ["fix", "grep", "apply_patch"], "technical");
+    recordPattern("fix:technical", ["fix", "technical"], "technical");
+    expect(habit.routine).toEqual(["fix", "grep", "apply_patch"]);
+  });
+});
