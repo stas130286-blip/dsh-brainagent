@@ -93,6 +93,7 @@ import {
   addDesire,
   expireGoals,
   checkGoalTriggers,
+  completeGoal,
   weakenDesiresAfterFire,
   satisfyDesiresOnUserResponse,
   tickExplorationBoosts,
@@ -280,6 +281,7 @@ export function apply(ctx: Context, config: Config) {
       getGoalStackStats,
       checkAutonomousGoals,
       buildGoalContext,
+      completeGoal,
       getDesires,
     },
     circadian: brainConfig.circadian.enabled ? { getCircadianState } : undefined,
@@ -813,6 +815,9 @@ export function apply(ctx: Context, config: Config) {
         const triggered = checkGoalTriggers(text, cycle.assessment?.emotion);
         if (triggered.length > 0) {
           cycle.triggeredGoals = triggered;
+          // v0.9.31: содержимое цели уже вошло в контекст этого хода —
+          // цель исполнена. Без закрытия стек копит `triggered` навсегда.
+          for (const goal of triggered) completeGoal(goal.id);
         }
       }
       return;

@@ -319,7 +319,7 @@ function stem(word: string): string {
  * Tokenize text into meaningful terms.
  * Returns stemmed tokens with stopwords removed.
  */
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ") // Keep letters, numbers, whitespace

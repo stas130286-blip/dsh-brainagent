@@ -1056,7 +1056,13 @@ export function createCommandRegistry(): CommandRegistryInstance {
     lines.push(
       "",
       "**Memory Search:**",
-      `  Backend: ${emb.available ? `AI embeddings (${emb.provider} / ${emb.model})` : "TF-IDF (локальный)"}`,
+      `  Backend: ${
+        emb.available
+          ? `AI embeddings (${emb.provider} / ${emb.model})`
+          : emb.provider !== "—"
+            ? `TF-IDF (лексический) — ${emb.provider} недоступен`
+            : "TF-IDF (лексический)"
+      }`,
       `  Cached vectors: episodic ${emb.cached.episodic}, semantic ${emb.cached.semantic}, procedural ${emb.cached.procedural}`,
     );
 

@@ -25,6 +25,7 @@ import {
   getEmbedding,
   embeddingCosineSimilarity,
   resolveEmbeddingProvider,
+  isEmbeddingsProviderDown,
 } from "./ai-embeddings.ts";
 import { bus } from "./event-bus.ts";
 import { callLLM, isAIProviderAvailable } from "./llm-client.ts";
@@ -555,7 +556,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
   } {
     const provider = embeddingsConfig ? resolveEmbeddingProvider(embeddingsConfig) : null;
     return {
-      available: embeddingsAvailable && provider !== null,
+      available: embeddingsAvailable && provider !== null && !isEmbeddingsProviderDown(),
       provider: provider?.name ?? "—",
       model: provider?.model ?? "—",
       cached: {

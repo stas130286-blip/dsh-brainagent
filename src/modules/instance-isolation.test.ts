@@ -673,6 +673,7 @@ describe("K: фабрики LLM-инфраструктуры изолирова�
 
     try {
       const cfg = {
+        agents: { defaults: { model: "ollama/llama3.3" } },
         models: { providers: { ollama: { baseUrl: "http://localhost:11434" } } },
       } as unknown as HostConfig;
 

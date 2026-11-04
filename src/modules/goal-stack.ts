@@ -311,6 +311,16 @@ export function createGoalStack(workspaceDir: string, config?: BrainAgentConfig)
         goal.status = "expired";
         changed = true;
         bus.emitSync("goal:expired", { goalId: goal.id });
+        continue;
+      }
+      // v0.9.31: страховка для `triggered`. Сработавшие цели закрываются
+      // деливерером сразу, но прерванный ход не должен оставлять в стеке
+      // вечный `triggered` (в бою накопилось 23 такие цели, pending — 0).
+      // Событие не эмитим: угасание желаний — про цели, которые не сработали,
+      // а не про те, чей текст уже ушёл в модель.
+      if (goal.status === "triggered" && now > goal.expiresAt) {
+        goal.status = "expired";
+        changed = true;
       }
     }
 

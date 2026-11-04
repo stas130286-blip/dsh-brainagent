@@ -8,6 +8,10 @@
  * Supports: OpenAI, Google, Ollama, OpenRouter (providers with an embeddings API).
  * Falls back gracefully if no provider is available.
  *
+ * v0.9.31: lexical (TF-IDF) is the default. Embeddings are opt-in — they
+ * activate only for an explicitly selected provider that supports them;
+ * the implicit Ollama fallback is gone.
+ *
  * v0.7.0: фабрика createAIEmbeddings() — флаг недостижимости Ollama
  * в замыкании инстанса; свободные функции — обёртки над общим ленивым
  * инстансом. Чистые функции (resolveEmbeddingProvider,
@@ -107,41 +111,28 @@ function buildEmbeddingConfig(
 /**
  * Resolve which provider to use for embeddings.
  *
- * Priority:
- * 1. User's selected provider (if it supports embeddings)
- * 2. Hardcoded fallback: OpenAI > Google > Ollama > OpenRouter
+ * v0.9.31: lexical (TF-IDF) is the default search backend. Embeddings are
+ * used only for the model the user explicitly selected, and only when that
+ * provider exposes an embeddings API. The old hardcoded
+ * OpenAI → Google → Ollama → OpenRouter fallback switched local Ollama on
+ * for every install and left an empty vector cache behind whenever it was
+ * not running (the status line still claimed "AI embeddings").
  */
 export function resolveEmbeddingProvider(config: NeuroClawConfig): EmbeddingProviderConfig | null {
   const providers = config.models?.providers;
   if (!providers) return null;
 
-  // ── Priority 1: respect user's selected provider ──────────────────
   const userSelection = parseUserModelSelection(config);
-  if (userSelection) {
-    const entry = (providers as Record<string, { apiKey?: string; baseUrl?: string }>)[
-      userSelection.provider
-    ];
-    if (entry) {
-      const result = buildEmbeddingConfig(userSelection.provider, entry);
-      if (result) return result;
-      // User's provider doesn't support embeddings — fall through to auto-detect
-    }
-  }
+  if (!userSelection) return null;
 
-  // ── Priority 2: hardcoded fallback (no user model or provider lacks embeddings) ──
-  const fallbackOrder = ["openai", "google", "ollama", "openrouter"];
-  for (const key of fallbackOrder) {
-    // Ollama — бесплатные локальные эмбеддинги: пробуем localhost даже
-    // без явной конфигурации (не запущена — getEmbeddings тихо вернёт null)
-    const entry =
-      (providers as Record<string, { apiKey?: string; baseUrl?: string }>)[key] ??
-      (key === "ollama" ? { baseUrl: DEFAULT_OLLAMA_BASE_URL } : undefined);
-    if (!entry) continue;
-    const result = buildEmbeddingConfig(key, entry);
-    if (result) return result;
-  }
+  const entry = (providers as Record<string, { apiKey?: string; baseUrl?: string }>)[
+    userSelection.provider
+  ];
+  if (!entry) return null;
 
-  return null;
+  // Providers without an embeddings API (DeepSeek, Anthropic, …) resolve to
+  // null here — the caller then stays on TF-IDF.
+  return buildEmbeddingConfig(userSelection.provider, entry);
 }
 
 // ── Fetch helpers (stateless) ───────────────────────────────────────
@@ -241,6 +232,8 @@ export type AIEmbeddingsInstance = {
     config: NeuroClawConfig,
     logger?: { info: (msg: string) => void },
   ): Promise<number[][] | null>;
+  /** True when the provider has been failing — callers fall back to TF-IDF. */
+  isProviderDown(): boolean;
 };
 
 // ── Factory ─────────────────────────────────────────────────────────
@@ -250,6 +243,12 @@ export function createAIEmbeddings(): AIEmbeddingsInstance {
   // ── State (closure) ───────────────────────────────────────────────
   /** Ollama один раз не ответила — больше не дёргаем до перезапуска. */
   let ollamaUnreachable = false;
+  /** Remote-провайдеры получают три страйка на транзиентные ошибки. */
+  let consecutiveFailures = 0;
+
+  function isProviderDown(): boolean {
+    return ollamaUnreachable || consecutiveFailures >= 3;
+  }
 
   async function getEmbeddings(
     texts: string[],
@@ -273,12 +272,18 @@ export function createAIEmbeddings(): AIEmbeddingsInstance {
         provider.format === "google"
           ? await fetchGoogleEmbeddings(texts, provider, logger)
           : await fetchOpenAIEmbeddings(texts, provider, logger);
-      if (result === null && provider.name === "Ollama") {
-        ollamaUnreachable = true; // нет модели/сервиса — переключаемся на TF-IDF
+      if (result === null) {
+        consecutiveFailures++;
+        if (provider.name === "Ollama") {
+          ollamaUnreachable = true; // нет модели/сервиса — переключаемся на TF-IDF
+        }
+      } else {
+        consecutiveFailures = 0;
       }
       return result;
     } catch (error) {
       logger?.info(`BrainAgent Embeddings: ${provider.name} error — ${String(error)}`);
+      consecutiveFailures++;
       if (provider.name === "Ollama") ollamaUnreachable = true;
       return null;
     }
@@ -293,7 +298,7 @@ export function createAIEmbeddings(): AIEmbeddingsInstance {
     return result?.[0] ?? null;
   }
 
-  return { getEmbedding, getEmbeddings };
+  return { getEmbedding, getEmbeddings, isProviderDown };
 }
 
 // ── Active-instance wrappers (backward-compatible API) ──────────────
@@ -327,6 +332,14 @@ export async function getEmbeddings(
   logger?: { info: (msg: string) => void },
 ): Promise<number[][] | null> {
   return current().getEmbeddings(texts, config, logger);
+}
+
+/**
+ * True when the active embeddings client has been failing; hippocampus then
+ * reports the honest backend (TF-IDF) instead of the configured provider.
+ */
+export function isEmbeddingsProviderDown(): boolean {
+  return active?.isProviderDown() ?? false;
 }
 
 /**

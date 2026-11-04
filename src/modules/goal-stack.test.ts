@@ -272,6 +272,19 @@ describe("Goal Stack", () => {
       expect(getGoalStackStats().expired).toBe(0);
       expect(getGoalStackStats().pending).toBe(1);
     });
+
+    it("expires stale triggered goals left by an interrupted turn", async () => {
+      createGoal("Fired once", { type: "topic", condition: "deploy" }, "test", "ctx", 0.5, 1);
+      checkGoalTriggers("deploy");
+
+      expect(getGoalStackStats().triggered).toBe(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expireGoals();
+
+      expect(getGoalStackStats().triggered).toBe(0);
+      expect(getGoalStackStats().expired).toBeGreaterThanOrEqual(1);
+    });
   });
 
   // ── Goal completion ────────────────────────────────────────

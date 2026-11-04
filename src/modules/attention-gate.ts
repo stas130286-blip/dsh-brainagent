@@ -10,6 +10,11 @@
  * current input and filters out low-relevance sections, modulated
  * by norepinephrine (high NE = more permissive attention).
  *
+ * v0.9.31: скоринг косинуса TF-IDF заменён на покрытие запроса —
+ * IDF-взвешенную долю термов входа, найденных в секции. Косинус
+ * «длинная секция ↔ короткий запрос» всегда был ниже порога 0.2,
+ * из-за чего гейт отбрасывал все секции (Sections: avg 0).
+ *
  * v0.6.2 (волна 1 миграции на per-instance состояние, пакет B):
  *  - фабрика `createAttentionGate()` создаёт инстанс со своими
  *    счётчиками и персистентностью;
@@ -23,7 +28,7 @@ import { join } from "node:path";
 import { atomicWrite } from "./persist.ts";
 import { bus } from "./event-bus.ts";
 import type { BrainAgentConfig, ContextTier } from "./types.ts";
-import { VectorIndex } from "./vector-engine.ts";
+import { tokenize } from "./vector-engine.ts";
 
 // ── Типы ────────────────────────────────────────────────────────────
 
@@ -98,36 +103,63 @@ export function createAttentionGate(workspaceDir: string): AttentionGateInstance
   ): string[] {
     if (injections.length === 0) return injections;
 
-    // Build a transient vector index for scoring
-    const index = new VectorIndex();
-    index.add("__query__", currentInput);
+    // Query-coverage scoring (v0.9.31). Cosine similarity between a long
+    // section and a short user message is always tiny — the section vector is
+    // diluted by hundreds of terms — so the old 0.2 cosine threshold dropped
+    // every section (observed: 0 sections kept across all 7 cycles). Coverage
+    // asks what the gate actually cares about: what share of the query's
+    // IDF-weighted terms does this section mention? Section length stops
+    // penalising relevance.
+    const queryTerms = new Set(tokenize(currentInput));
+    const sectionTerms = injections.map((text) => new Set(tokenize(text)));
 
-    // Score each injection
+    const docFrequency = new Map<string, number>();
+    for (const terms of sectionTerms) {
+      for (const term of terms) {
+        docFrequency.set(term, (docFrequency.get(term) ?? 0) + 1);
+      }
+    }
+    // Smoothed IDF: a term present in every section barely distinguishes them.
+    const termWeight = (term: string): number =>
+      Math.log(1 + injections.length / (1 + (docFrequency.get(term) ?? 0)));
+
+    let queryWeight = 0;
+    for (const term of queryTerms) queryWeight += termWeight(term);
+
     const scored: Array<{ text: string; score: number; idx: number }> = [];
     for (let i = 0; i < injections.length; i++) {
-      index.add(`section_${i}`, injections[i]);
-      const results = index.search(currentInput, injections.length + 1);
-      const match = results.find((r) => r.id === `section_${i}`);
+      let matchedWeight = 0;
+      if (queryWeight > 0) {
+        for (const term of queryTerms) {
+          if (sectionTerms[i].has(term)) matchedWeight += termWeight(term);
+        }
+      }
       scored.push({
         text: injections[i],
-        score: match?.score ?? 0,
+        score: queryWeight > 0 ? matchedWeight / queryWeight : 0,
         idx: i,
       });
     }
 
-    // Adjust threshold by norepinephrine: high NE = lower threshold (more permissive)
-    const effectiveThreshold =
+    // Adjust threshold by norepinephrine: high NE = lower threshold (more permissive).
+    const absoluteThreshold =
       config.attentionGate.minRelevanceScore * (1 - norepinephrineLevel * 0.5);
+    // Relative floor: the best section always survives, so a short or unusual
+    // input ("привет") can never empty the whole context and silently strip
+    // identity, clock and memory blocks from the prompt.
+    const bestScore = scored.reduce((max, item) => Math.max(max, item.score), 0);
+    const effectiveThreshold = Math.min(absoluteThreshold, bestScore * 0.6);
 
-    // Sort by score descending and take top K above threshold
-    scored.sort((a, b) => b.score - a.score);
-
-    let kept: string[] = [];
+    // Take the top K above threshold, then restore assembly order — identity
+    // and clock blocks must keep their intended positions in the prompt.
+    const ranked = [...scored].sort((a, b) => b.score - a.score);
+    const keep = new Set<number>();
+    let keptScore = 0;
     let dropped = 0;
-    for (const item of scored) {
-      if (kept.length < config.attentionGate.maxContextSections && item.score >= effectiveThreshold) {
-        kept.push(item.text);
-        totalRelevanceSum += item.score;
+    for (const item of ranked) {
+      if (keep.size < config.attentionGate.maxContextSections && item.score >= effectiveThreshold) {
+        keep.add(item.idx);
+        keptScore += item.score;
       } else {
         dropped++;
         bus.emitSync("attention:section-dropped", {
@@ -136,6 +168,8 @@ export function createAttentionGate(workspaceDir: string): AttentionGateInstance
         });
       }
     }
+    totalRelevanceSum += keptScore;
+    let kept: string[] = injections.filter((_, idx) => keep.has(idx));
 
     // Token budget enforcement: drop lowest-relevance sections once budget exhausted
     if (maxTokenBudget && maxTokenBudget > 0) {
@@ -218,9 +252,9 @@ export function shouldInjectForTier(moduleTier: ContextTier, allowedTier: Contex
 /**
  * Filter context injections by relevance to the current input.
  *
- * Uses TF-IDF similarity to score each section against the input.
- * Norepinephrine level modulates the threshold: high NE makes the
- * gate more permissive (lets more through for complex/urgent tasks).
+ * Scores each section by IDF-weighted coverage of the input's terms and
+ * keeps the best ones within the section and token budgets. Norepinephrine
+ * modulates the threshold: high NE makes the gate more permissive.
  */
 export function filterContextInjections(
   injections: string[],

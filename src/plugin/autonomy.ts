@@ -348,6 +348,8 @@ export type IntentResolverDeps = {
     getGoalStackStats: () => { pending: number };
     checkAutonomousGoals: (idleMs?: number) => Goal[];
     buildGoalContext: (goals: Goal[]) => string | undefined;
+    /** Close a fired goal: its text has already been handed to the deliverer. */
+    completeGoal?: (goalId: string) => void;
     getDesires: () => Desire[];
   };
   circadian?: {
@@ -386,6 +388,10 @@ export function createAutonomousIntentResolver(deps: IntentResolverDeps): () => 
             // сработавшие автономные цели не попадали в его статистику.
             recordGoalExecution(triggered.length);
             state.lastAutonomousSource = `goal:${triggered[0].id}`;
+            // v0.9.31: сработавшие цели процитированы в интенте ниже — закрываем,
+            // иначе стек держит `triggered` вечно и резолвер перестаёт видеть
+            // pending-цели (23 triggered / 0 pending в бою).
+            for (const goal of triggered) deps.goalStack?.completeGoal?.(goal.id);
             return {
               text: [
                 ...(priority ? [AUTONOMY_PRIORITY_PREFIX] : []),
