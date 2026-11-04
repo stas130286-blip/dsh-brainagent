@@ -137,8 +137,8 @@ pnpm vitest run     # 64 файла, 918 тестов
 Автономно, вне монорепо:
 
 ```sh
-npm install --legacy-peer-deps   # пиры предоставляет хост dsh, а wildcard-зависимости
-                                 # тянут несогласованные rc-версии — ставим мягко
+npm install --legacy-peer-deps   # пиры (cordis, dsh-agent, dsh-llm, ...) предоставляет
+                                 # хост dsh; в репозитории они закреплены в devDependencies
 npm test                         # vitest: 64 файла, 918 тестов
 npm run typecheck                # tsc --noEmit
 npm run build                    # esbuild → lib/index.js
