@@ -16,6 +16,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { setAIAvailabilityHook, setCallLLMBackend } from "../modules/llm-client.ts";
+import { BRAINAGENT_SOURCE } from "../plugin/message-source.ts";
 
 type Route = { provider: string; model: string };
 
@@ -78,7 +79,7 @@ export function attachLlmBridge(ctx: Context, preferredModel?: string): () => vo
         messages: [
           createUserMessage({
             content: [{ type: "text", text: userText }],
-            source: { kind: "plugin", plugin: "brainagent" },
+            source: BRAINAGENT_SOURCE,
           }),
         ],
         temperature: 0.1,

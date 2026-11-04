@@ -15,6 +15,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import type { UserMessage } from "@deepseek-ai/dsh-session";
 import type { HostConfig } from "../modules/host-config.ts";
 import { bus } from "../modules/event-bus.ts";
+import { BRAINAGENT_SOURCE } from "./message-source.ts";
 import { assessWithAI } from "../modules/amygdala.ts";
 import { observeWithAI, getStyleRecommendation } from "../modules/mirror-neurons.ts";
 import { detectReinforcementWithAI, findHabit, buildHabitContext } from "../modules/basal-ganglia.ts";
@@ -509,7 +510,7 @@ export function createPreStepHandler(deps: PreStepDeps) {
     // honoring the "model-visible means logged" invariant.
     const contextMessage = createUserMessage({
       content: [{ type: "text", text: contextText }],
-      source: { kind: "plugin", plugin: "brainagent" },
+      source: BRAINAGENT_SOURCE,
     });
     return { kind: "enter", messages: [...decision.messages, contextMessage] };
   };

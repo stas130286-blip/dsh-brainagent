@@ -131,14 +131,10 @@ import { callLLM } from "./modules/llm-client.ts";
 import { registerBrainAgentCommands, setCommandStatGetters, buildStatusReport } from "./modules/commands.ts";
 import { classify } from "./modules/thalamus.ts";
 import { decideProcessingPath } from "./modules/prefrontal-cortex.ts";
+import { BRAINAGENT_SOURCE } from "./plugin/message-source.ts";
 
-// Proactive BrainAgent impulses ride a plugin-defined message source kind
-// (MessageSourceMap is merge-extensible by design).
-declare module "@deepseek-ai/dsh-llm" {
-  interface MessageSourceMap {
-    cron: { kind: "cron"; plugin: string };
-  }
-}
+// Proactive BrainAgent impulses ride the producer-owned source declared in
+// ./plugin/message-source.ts (MessageSourceMap is merge-extensible by design).
 
 // ── Plugin metadata & configuration ─────────────────────────────────
 
@@ -221,7 +217,7 @@ export function apply(ctx: Context, config: Config) {
     deliver: (agent, framed) => {
       const message = createUserMessage({
         content: [{ type: "text", text: framed }],
-        source: { kind: "cron", plugin: "brainagent" },
+        source: BRAINAGENT_SOURCE,
       });
       try {
         agent.followup(message);
