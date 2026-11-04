@@ -35,7 +35,7 @@ import type {
   ProceduralMemory,
   SemanticMemory,
 } from "./types.ts";
-import { VectorIndex } from "./vector-engine.ts";
+import { tokenize, VectorIndex } from "./vector-engine.ts";
 import { atomicWrite, loadJsonFile, saveJsonFile } from "./persist.ts";
 import { isDurableFact } from "./fact-importance.ts";
 
@@ -147,6 +147,40 @@ export interface PendingContradiction {
   similarity: number;
 }
 
+/**
+ * v0.9.39: порог «только по сходству», без единого общего слова.
+ * Индекс считает TF-IDF по словам И по символьным n-граммам, поэтому у
+ * случайных фраз есть шумовой пол 0.1–0.3: «что мы обсуждали» давало 0.275
+ * с «как вечер проходит». Настоящее совпадение по форме слова (опечатка,
+ * окончание) даёт ≥0.5 — шум не даёт.
+ */
+const RECALL_FUZZY_ONLY_GATE = 0.5;
+
+/** Подкрепление следа — только за вспоминание по совпадению, не по свежести. */
+const RECALL_REINFORCE_MIN_RELEVANCE = 0.1;
+
+/**
+ * v0.9.39: совпадение слов с поправкой на грубый стеммер. Он не срезает
+ * падежные окончания вроде «-и» («Казань» → «казань», «Казани» → «казани»),
+ * поэтому сравниваем ещё и первые четыре буквы. Этого хватает на склонения
+ * и не хватает на случайные совпадения («живёт» / «жила»).
+ */
+function wordOverlap(queryTokens: Set<string>, queryPrefixes: Set<string>, text: string): boolean {
+  for (const token of tokenize(text)) {
+    if (queryTokens.has(token)) return true;
+    if (token.length >= 4 && queryPrefixes.has(token.slice(0, 4))) return true;
+  }
+  return false;
+}
+
+function makeWordPrefixes(tokens: Iterable<string>): Set<string> {
+  const prefixes = new Set<string>();
+  for (const token of tokens) {
+    if (token.length >= 4) prefixes.add(token.slice(0, 4));
+  }
+  return prefixes;
+}
+
 export interface HippocampusInstance {
   storeEpisode(
     event: string,
@@ -162,6 +196,8 @@ export interface HippocampusInstance {
     /** v0.9.20: бонус эмоц.-согласованного вспоминания на эпизод. */
     emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
   ): EpisodicMemory[];
+  /** v0.9.39: последние эпизоды по времени, без оценки сходства. */
+  getRecentEpisodes(limit?: number): EpisodicMemory[];
   storeFact(
     content: string,
     category: string,
@@ -657,42 +693,64 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       ? new Map(embeddingResults.map((r) => [r.id, r.score]))
       : null;
 
-    // Compute hybrid scores for ALL episodes
+    // v0.9.39: релевантность — множитель, а не слагаемое. Раньше свежесть
+    // (recency 0.2 + salience 0.2) входила аддитивной константой и
+    // перекрывала лексический вклад: на боевом сторе три разных запроса
+    // возвращали одни и те же пять сегодняшних эпизодов, включая запрос
+    // без единого общего слова. Теперь свежесть только модулирует
+    // сходство (0.6…1.0) и работает тай-брейком.
+    const queryTokens = new Set(tokenize(query));
+    const queryPrefixes = makeWordPrefixes(queryTokens);
     const scored = episodicStore.map((ep) => {
       const tfidfScore = vectorScoreMap.get(ep.id) ?? 0;
       const embScore = embScoreMap?.get(ep.id) ?? 0;
-      // If embeddings available: 40% embedding + 20% TF-IDF + 20% recency + 20% salience
-      // If not: 60% TF-IDF + 20% recency + 20% salience
-      const vectorScore = embScoreMap ? embScore * 0.4 + tfidfScore * 0.2 : tfidfScore * 0.6;
+      // If embeddings available: 60% embedding + 40% TF-IDF;
+      // If not: purely TF-IDF.
+      const relevance = embScoreMap ? embScore * 0.6 + tfidfScore * 0.4 : tfidfScore;
+      // Общее слово (в стеммированном виде) — единственный надёжный признак
+      // смысла: у n-граммного косинуса слишком высокий шумовой пол.
+      const wordHit = wordOverlap(
+        queryTokens,
+        queryPrefixes,
+        `${ep.event} ${ep.summary} ${ep.entities.join(" ")}`,
+      );
       const recencyDays = (Date.now() - ep.timestamp) / (24 * 60 * 60 * 1000);
       const recencyScore = 1 / (1 + recencyDays * 0.1);
-      const salienceScore = ep.salience;
-
-      // Hybrid: vector + recency 20% + salience 20% (+ эмоц.-согласованный
-      // бонус: воспоминания с меткой текущей эмоции всплывают легче, v0.9.20)
-      const score =
-        vectorScore +
-        recencyScore * 0.2 +
-        salienceScore * 0.2 +
-        (emotionBonus?.(ep.emotionalContext) ?? 0);
-      return { episode: ep, score };
+      // эмоц.-согласованный бонус: в «радостном» цикле радостные эпизоды
+      // всплывают легче (v0.9.20). Тоже множитель, не добавка.
+      const emotion = emotionBonus?.(ep.emotionalContext) ?? 0;
+      const freshness = 0.6 + recencyScore * 0.25 + ep.salience * 0.15 + emotion;
+      const found = wordHit || relevance >= RECALL_FUZZY_ONLY_GATE;
+      return { episode: ep, score: relevance * freshness, relevance, found };
     });
 
     scored.sort((a, b) => b.score - a.score);
-    const results = scored
-      .slice(0, limit)
-      .filter((s) => s.score > 0.05)
-      .map((s) => s.episode);
+    const selected = scored.filter((s) => s.found).slice(0, limit);
+    const results = selected.map((s) => s.episode);
 
-    // Hebb's rule: strengthen recalled memories
-    for (const ep of results) {
+    // Hebb's rule: strengthen what was recalled *for a reason*. Подкреплять
+    // всплывшее по одной свежести значило накачивать сегодняшние эпизоды до
+    // 1.0 и хоронить старые: чем чаще всплываешь, тем сильнее.
+    for (const { episode: ep, relevance } of selected) {
       ep.accessCount++;
-      ep.salience = Math.min(1, ep.salience + 0.05);
+      if (relevance >= RECALL_REINFORCE_MIN_RELEVANCE) {
+        ep.salience = Math.min(1, ep.salience + 0.05);
+      }
       ep.lastAccessedAt = Date.now();
     }
     if (results.length > 0) persistEpisodic();
 
     return results;
+  }
+
+  /**
+   * v0.9.39: последние эпизоды по времени, без оценки сходства.
+   * Честный ответ на «что мы обсуждали»: это именно последние разговоры,
+   * а не случайные свежие воспоминания, подставленные под запрос.
+   */
+  function getRecentEpisodes(limit = 3): EpisodicMemory[] {
+    if (episodicStore.length === 0) return [];
+    return [...episodicStore].sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -990,21 +1048,27 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
       : null;
 
     const candidateIds = new Set(candidates.map((f) => f.id));
+    const queryTokens = new Set(tokenize(query));
+    const queryPrefixes = makeWordPrefixes(queryTokens);
 
     const scored = candidates.map((fact) => {
       const tfidfScore = candidateIds.has(fact.id) ? (vectorScoreMap.get(fact.id) ?? 0) : 0;
       const embScore = embScoreMap?.get(fact.id) ?? 0;
-      // If embeddings: 50% embedding + 20% TF-IDF + 30% confidence
-      // If not: 70% TF-IDF + 30% confidence
-      const vectorScore = embScoreMap ? embScore * 0.5 + tfidfScore * 0.2 : tfidfScore * 0.7;
-      const score = vectorScore + fact.confidence * 0.3;
-      return { fact, score };
+      // If embeddings: 60% embedding + 40% TF-IDF; if not: purely TF-IDF.
+      const relevance = embScoreMap ? embScore * 0.6 + tfidfScore * 0.4 : tfidfScore;
+      // v0.9.39: уверенность модулирует сходство (0.7…1.0), а не добавляется
+      // к нему. Иначе факт с confidence 1.0 попадал в промпт на любой запрос:
+      // пути к файлам с накопленной уверенностью вытесняли релевантное.
+      const score = relevance * (0.7 + fact.confidence * 0.3);
+      const wordHit = wordOverlap(queryTokens, queryPrefixes, `${fact.content} ${fact.category}`);
+      const found = wordHit || relevance >= RECALL_FUZZY_ONLY_GATE;
+      return { fact, score, relevance, found };
     });
 
     scored.sort((a, b) => b.score - a.score);
     return scored
+      .filter((s) => s.found)
       .slice(0, limit)
-      .filter((s) => s.score > 0.03)
       .map((s) => s.fact);
   }
 
@@ -1634,6 +1698,7 @@ export function createHippocampus(workspaceDir: string): HippocampusInstance {
   return {
     storeEpisode,
     recallEpisodes,
+    getRecentEpisodes,
     storeFact,
     getPendingContradictions,
     clearPendingContradictions,
@@ -1741,6 +1806,10 @@ export function recallEpisodes(
   emotionBonus?: (memoryEmotion: EpisodicMemory["emotionalContext"]) => number,
 ): EpisodicMemory[] {
   return current().recallEpisodes(query, limit, embeddingResults, emotionBonus);
+}
+
+export function getRecentEpisodes(limit = 3): EpisodicMemory[] {
+  return current().getRecentEpisodes(limit);
 }
 
 export function storeFact(

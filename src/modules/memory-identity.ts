@@ -49,10 +49,22 @@ export function pinIdentityFacts(
  * вопросе возвращает случайный топ.
  */
 const SELF_QUERY_RE =
-  /обо\s+мне|про\s+меня|кто\s+я(?!\p{L})|мо[йяеё]\S{0,3}\s+(?:резюме|опыт|работ|професси|биограф|семь|город|жизн|карьер)|what\s+do\s+you\s+(?:know|remember)\s+about\s+me|who\s+am\s+i/iu;
+  /(?:обо|о\s+бо)\s+мне|про\s+меня|кто\s+я(?!\p{L})|мо[йяеё]\S{0,3}\s+(?:резюме|опыт|работ|професси|биограф|семь|город|жизн|карьер)|what\s+do\s+you\s+(?:know|remember)\s+about\s+me|who\s+am\s+i/iu;
 
 export function isSelfQuery(input: string): boolean {
   return SELF_QUERY_RE.test(input);
+}
+
+/**
+ * v0.9.39: вопрос о прошлых разговорах, а не о теме. На «что мы обсуждали»
+ * лексике не за что зацепиться — ни одно слово вопроса не встречается в
+ * эпизодах. Такой запрос обслуживает откат по времени, а не сходство.
+ */
+const CONVERSATION_QUERY_RE =
+  /помн[а-яё]*|обсужд[а-яё]+|обсуждал[а-яё]*|разговар[а-яё]+|говорили|в\s+прошл[а-яё]+\s+раз|на\s+прошл[а-яё]+\s+недел|позавчера|вчера|недавно|what\s+did\s+we\s+(?:discuss|talk)|do\s+you\s+remember|last\s+time/iu;
+
+export function isConversationQuery(input: string): boolean {
+  return CONVERSATION_QUERY_RE.test(input);
 }
 
 /** Слоты базового знания на обычном ходу. */

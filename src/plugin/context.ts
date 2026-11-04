@@ -22,8 +22,13 @@ import { detectReinforcementWithAI, findHabit, buildHabitContext } from "../modu
 import { deriveHabitSignature } from "../modules/habit-signature.ts";
 import { isAIProviderAvailable } from "../modules/ai-extractor.ts";
 import { getAttentionLevel, getNeuromodulatorState } from "../modules/dopamine-system.ts";
-import { recallAllAsync, getAllFacts } from "../modules/hippocampus.ts";
-import { buildSelfDigest, isSelfQuery, selectPinnedFacts } from "../modules/memory-identity.ts";
+import { recallAllAsync, getAllFacts, getRecentEpisodes } from "../modules/hippocampus.ts";
+import {
+  buildSelfDigest,
+  isConversationQuery,
+  isSelfQuery,
+  selectPinnedFacts,
+} from "../modules/memory-identity.ts";
 import { predict } from "../modules/predictive-engine.ts";
 import { buildNeuromodulatorContext } from "../modules/neural-pathways.ts";
 import { buildLearningContext, buildCapabilityContext } from "../modules/learning-coordinator.ts";
@@ -251,6 +256,12 @@ export function createPreStepHandler(deps: PreStepDeps) {
             computeEmotionMatchBonus(cyc.assessment!.emotion, memoryEmotion, brainConfig)
         : undefined;
     const recalled = await recallAllAsync(input, episodicLimit, semanticLimit, emotionBonus);
+    // v0.9.39: «что мы обсуждали» лексике не поддаётся — в вопросе нет ни
+    // одного слова из эпизодов. Такой ход обслуживает честный откат по
+    // времени (последние разговоры), а не случайный свежий топ по сходству.
+    if (recalled.episodic.length === 0 && isConversationQuery(input)) {
+      recalled.episodic = getRecentEpisodes(episodicLimit);
+    }
     // v0.9.12: пиннинг identity-фактов (имя, имущество, работа). Они не
     // должны зависеть от релевантности запроса: вопрос «что ты знаешь
     // обо мне?» не может остаться без имени из-за лексического
