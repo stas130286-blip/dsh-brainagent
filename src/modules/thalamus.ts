@@ -58,6 +58,13 @@ const EMOTIONAL_KEYWORDS = [
   "angry",
   "afraid",
   "worried",
+  "устал",
+  "бесит",
+  "тревог",
+  "обид",
+  "восхит",
+  "приятн",
+  "жаль",
 ];
 
 const TECHNICAL_KEYWORDS = [
@@ -88,6 +95,55 @@ const TECHNICAL_KEYWORDS = [
   "curl",
   "json",
   "yaml",
+  // v0.9.33: русские основы — без них длинные технические сообщения
+  // уходили в unknown и загрязняли mastery-домены.
+  "ошибк",
+  "терминал",
+  "скрипт",
+  "плагин",
+  "репозитор",
+  "коммит",
+  "токен",
+  "модул",
+  "тест",
+  "сборк",
+  "верси",
+  "статус",
+  "запрос",
+  "архитектур",
+  "нейросет",
+  "промпт",
+  "агент",
+  "браузер",
+  "файл",
+  "установ",
+  "обнов",
+  "запуск",
+  "данн",
+  "память",
+  "модел",
+  "систем",
+  "интерфейс",
+  "кэш",
+  "хост",
+  "pnpm",
+  "vitest",
+  "esbuild",
+  // Английские термины разработки: в русской речи они тоже несут домен.
+  "error",
+  "build",
+  "test",
+  "stack",
+  "executor",
+  "heartbeat",
+  "commit",
+  "branch",
+  "merge",
+  "plugin",
+  "module",
+  "patch",
+  "release",
+  "token",
 ];
 
 const CREATIVE_KEYWORDS = [
@@ -109,6 +165,12 @@ const CREATIVE_KEYWORDS = [
   "картинка",
   "логотип",
   "logo",
+  "сценар",
+  "слоган",
+  "макет",
+  "нарисуй",
+  "музык",
+  "песн",
 ];
 
 const COMMAND_PATTERNS = [
@@ -155,11 +217,16 @@ function detectDomain(text: string): MessageDomain {
   const [topDomain, topScore] = scores[0];
 
   if (topScore === 0) {
+    // v0.9.33: у таламуса нет «неизвестного» канала — кора всегда
+    // достраивает контекст. unknown остаётся только для текста без букв
+    // (числа, знаки), который нечем маршрутизировать.
+    if (!/\p{L}/u.test(text)) return "unknown";
     // Short messages with no keywords → casual
     if (text.length < 30) return "casual";
     // Longer messages with question marks → factual
     if (text.includes("?")) return "factual";
-    return "unknown";
+    // Длинная проза без маркеров — обычный разговор, а не «неизвестно».
+    return "casual";
   }
 
   return topDomain;

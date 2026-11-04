@@ -31,13 +31,14 @@
  *    detectReinforcementWithAI) остались свободными.
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWrite } from "./persist.ts";
 import type { HostConfig as NeuroClawConfig } from "./host-config.ts";
 import { callLLM } from "./llm-client.ts";
 import { VectorIndex } from "./vector-engine.ts";
 import { classifyFeedback } from "./i18n-heuristics.ts";
+import { isHabitSignature } from "./habit-signature.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -45,6 +46,8 @@ export type Habit = {
   id: string;
   /** The cue: normalized pattern of the triggering request */
   cue: string;
+  /** Версия формата ключа (2 — схема действия `task:domain`, v0.9.33). */
+  cueVersion?: number;
   /** The routine: sequence of actions/tools used */
   routine: string[];
   /** What domain this habit serves */
@@ -93,10 +96,16 @@ export type BasalGangliaInstance = {
 
 /** Minimum activations before a habit can auto-execute */
 const MIN_ACTIVATIONS_FOR_AUTO = 3;
-/** Minimum reward signal for auto-execution */
-const MIN_REWARD_FOR_AUTO = 0.6;
+/** Минимальная награда: ниже неё привычка наказана и не автоматизируется. */
+const MIN_REWARD_FOR_AUTO = 0.35;
 /** Maximum habits to store */
 const MAX_HABITS = 200;
+/** Версия формата ключа привычки (2 — сигнатура `task:domain`). */
+const HABIT_CUE_VERSION = 2;
+/** Порог силы привычки для автоматического запуска (повторение + награда). */
+const AUTO_STRENGTH_THRESHOLD = 0.55;
+/** Полураспад следа без подкрепления; повторения его удлиняют. */
+const RETENTION_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ── Фабрика ─────────────────────────────────────────────────────────
 
@@ -120,7 +129,18 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
     try {
       const path = join(storageDir, "habits.json");
       if (existsSync(path)) {
-        habits = JSON.parse(readFileSync(path, "utf-8")) as Habit[];
+        const loaded = JSON.parse(readFileSync(path, "utf-8")) as Habit[];
+        // v0.9.33: ключи старого формата (сырой текст сообщения) больше не
+        // воспроизводятся энкодером — такие привычки недостижимы, как
+        // моторная программа, выученная под исчезнувший стимул.
+        habits = loaded.filter((h) => h.cueVersion === HABIT_CUE_VERSION);
+        if (habits.length !== loaded.length) {
+          // Архив: старые ключи недостижимы для нового энкодера, но не стираем
+          // их без следа — рядом остаётся файл прошлой версии.
+          const backup = join(storageDir, "habits.legacy-v1.json");
+          if (!existsSync(backup)) copyFileSync(path, backup);
+          persistHabits();
+        }
       }
     } catch {
       habits = [];
@@ -147,8 +167,30 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
 
   // ── Habit matching ────────────────────────────────────────────────
 
+  /**
+   * Сила привычки: 60% повторения, 40% подкрепления. Награда ниже порога
+   * гасит автоматизацию (наказание), даже если повторений много.
+   */
+  function isAutomated(h: Habit): boolean {
+    const repetition = Math.min(h.activationCount / 10, 1);
+    const strength = repetition * 0.6 + h.rewardSignal * 0.4;
+    return strength >= AUTO_STRENGTH_THRESHOLD && h.rewardSignal >= MIN_REWARD_FOR_AUTO;
+  }
+
   function findHabit(input: string, domain: string): HabitMatch | undefined {
     if (habits.length === 0) return undefined;
+
+    // v0.9.33: сигнатурный ключ ищется только точно — разные типы задач
+    // (search / status / deploy) не должны сливаться в одну привычку.
+    if (isHabitSignature(input)) {
+      const exact = habits.find((h) => h.cue === input && h.domain === domain);
+      if (!exact) return undefined;
+      return {
+        habit: exact,
+        matchScore: 0.5 + exact.rewardSignal * 0.3 + 0.2,
+        autoExecute: isAutomated(exact),
+      };
+    }
 
     // Search vector index for similar habits
     const results = habitIndex.search(`${input} ${domain}`, 5, 0.2);
@@ -168,11 +210,9 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
       if (matchScore > bestScore) {
         bestScore = matchScore;
 
-        // Auto-execute only if the habit is well-established
-        const autoExecute =
-          habit.activationCount >= MIN_ACTIVATIONS_FOR_AUTO &&
-          habit.rewardSignal >= MIN_REWARD_FOR_AUTO &&
-          result.score > 0.5; // High confidence match
+        // v0.9.33: автоматизация — сила привычки (повторение + награда),
+        // а не только награда: повторение и есть механизм стриатума.
+        const autoExecute = isAutomated(habit) && result.score > 0.5; // High confidence match
 
         bestMatch = { habit, matchScore, autoExecute };
       }
@@ -189,8 +229,11 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
     domain: string,
     exampleResponse?: string,
   ): Habit {
-    // Check if this matches an existing habit
-    const existing = habitIndex.search(`${cue} ${domain}`, 1, 0.6);
+    // v0.9.33: для сигнатур — только точное совпадение; для ключей
+    // свободного текста (старые данные и тесты) сохраняем векторный поиск.
+    const existing = isHabitSignature(cue)
+      ? habits.filter((h) => h.cue === cue && h.domain === domain).map((h) => ({ id: h.id }))
+      : habitIndex.search(`${cue} ${domain}`, 1, 0.6);
     if (existing.length > 0) {
       const habit = habits.find((h) => h.id === existing[0].id);
       if (habit) {
@@ -225,6 +268,7 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
     const habit: Habit = {
       id: nextHabitId(),
       cue,
+      cueVersion: HABIT_CUE_VERSION,
       routine,
       domain,
       rewardSignal: 0.5, // Neutral start
@@ -279,14 +323,34 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
 
   // ── Habit pruning ─────────────────────────────────────────────────
 
+  /**
+   * Кривая забывания Эббингауза: след слабеет без подкрепления, а каждое
+   * повторение удлиняет его «постоянную времени» (1 + активации).
+   */
+  function retention(h: Habit, now: number): number {
+    return Math.exp(-(now - h.lastActivated) / (RETENTION_HALF_LIFE_MS * (1 + h.activationCount)));
+  }
+
   function pruneWeakHabits(): void {
+    const now = Date.now();
+
+    // Сначала забываем неповторявшееся: одноразовая привычка без подкрепления
+    // стирается примерно за две недели и не занимает место под лимитом.
+    const alive = habits.filter(
+      (h) => retention(h, now) >= 0.02 || h.activationCount >= MIN_ACTIVATIONS_FOR_AUTO,
+    );
+    for (const h of habits) {
+      if (!alive.includes(h)) habitIndex.remove(h.id);
+    }
+    habits = alive;
+
     // Score each habit
     const scored = habits.map((h) => ({
       habit: h,
       score:
         h.rewardSignal * 0.4 +
         Math.min(h.activationCount / 10, 1) * 0.4 +
-        (1 / (1 + (Date.now() - h.lastActivated) / (7 * 24 * 60 * 60 * 1000))) * 0.2,
+        retention(h, now) * 0.2,
     }));
 
     scored.sort((a, b) => b.score - a.score);
@@ -305,9 +369,7 @@ export function createBasalGanglia(workspaceDir: string): BasalGangliaInstance {
   // ── Stats ─────────────────────────────────────────────────────────
 
   function getStats(): BasalStats {
-    const automated = habits.filter(
-      (h) => h.activationCount >= MIN_ACTIVATIONS_FOR_AUTO && h.rewardSignal >= MIN_REWARD_FOR_AUTO,
-    ).length;
+    const automated = habits.filter((h) => isAutomated(h)).length;
     const avgReward =
       habits.length > 0 ? habits.reduce((sum, h) => sum + h.rewardSignal, 0) / habits.length : 0;
     const totalAct = habits.reduce((sum, h) => sum + h.activationCount, 0);

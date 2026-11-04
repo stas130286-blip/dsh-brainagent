@@ -19,6 +19,7 @@ import { BRAINAGENT_SOURCE } from "./message-source.ts";
 import { assessWithAI } from "../modules/amygdala.ts";
 import { observeWithAI, getStyleRecommendation } from "../modules/mirror-neurons.ts";
 import { detectReinforcementWithAI, findHabit, buildHabitContext } from "../modules/basal-ganglia.ts";
+import { deriveHabitSignature } from "../modules/habit-signature.ts";
 import { isAIProviderAvailable } from "../modules/ai-extractor.ts";
 import { getAttentionLevel, getNeuromodulatorState } from "../modules/dopamine-system.ts";
 import { recallAllAsync, getFactsByCategory } from "../modules/hippocampus.ts";
@@ -297,7 +298,9 @@ export function createPreStepHandler(deps: PreStepDeps) {
 
     // Basal ganglia: check for a matching habit.
     if (brainConfig.modules.basalGanglia && cyc.classification) {
-      const habitMatch = findHabit(input, cyc.classification.domain);
+      // v0.9.33: ищем по схеме действия, а не по сырому тексту сообщения.
+      const signature = deriveHabitSignature(input, cyc.classification.domain);
+      const habitMatch = findHabit(signature.cue, cyc.classification.domain);
       if (habitMatch) {
         injections.push(buildHabitContext(habitMatch));
         deps.sessionHabits.set(key, habitMatch.habit.id);

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -270,5 +270,72 @@ describe("Basal Ganglia (habit formation)", () => {
       const statsAfter = getBasalStats();
       expect(statsAfter.totalHabits).toBe(statsBefore.totalHabits);
     });
+  });
+});
+
+// ── v0.9.33: сигнатура привычки, автоматизация повторением, миграция ──
+
+describe("Basal Ganglia v0.9.33: сигнатура привычки", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "brainagent-basal-v2-"));
+    initBasalStorage(dir);
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
+  });
+
+  it("привычка автоматизируется повторением, без высокой награды", () => {
+    const habit = recordPattern("status:technical", ["status", "technical"], "technical");
+    for (let i = 0; i < 5; i++) {
+      recordPattern("status:technical", ["status", "technical"], "technical");
+    }
+    expect(habit.activationCount).toBe(6);
+    expect(getBasalStats().automatedHabits).toBe(1);
+    const match = findHabit("status:technical", "technical");
+    expect(match?.autoExecute).toBe(true);
+  });
+
+  it("наказание гасит автоматизацию даже при повторениях", () => {
+    const habit = recordPattern("fix:technical", ["fix", "technical"], "technical");
+    for (let i = 0; i < 9; i++) {
+      recordPattern("fix:technical", ["fix", "technical"], "technical");
+    }
+    expect(getBasalStats().automatedHabits).toBe(1);
+
+    reinforce(habit.id, "negative");
+    reinforce(habit.id, "negative");
+
+    expect(getBasalStats().automatedHabits).toBe(0);
+    expect(findHabit("fix:technical", "technical")?.autoExecute).toBe(false);
+  });
+
+  it("сигнатурный ключ ищется только точно", () => {
+    recordPattern("search:technical", ["search", "technical"], "technical");
+    expect(findHabit("search:technical", "technical")).toBeDefined();
+    expect(findHabit("search:creative", "technical")).toBeUndefined();
+  });
+
+  it("привычки старого формата отбрасываются при загрузке", () => {
+    recordPattern("legacy raw text cue", ["x"], "technical");
+    const path = join(dir, ".brainagent", "habits", "habits.json");
+
+    // Имитируем файл прошлой версии: у привычки нет cueVersion.
+    const legacy = (JSON.parse(readFileSync(path, "utf-8")) as Array<Record<string, unknown>>).map(
+      (h) => {
+        const { cueVersion: _dropped, ...rest } = h;
+        return rest;
+      },
+    );
+    writeFileSync(path, JSON.stringify(legacy, null, 2));
+
+    initBasalStorage(dir);
+    expect(getBasalStats().totalHabits).toBe(0);
   });
 });

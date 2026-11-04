@@ -22,6 +22,7 @@ import { assess } from "../modules/amygdala.ts";
 import { observe } from "../modules/mirror-neurons.ts";
 import { observeInteraction } from "../modules/predictive-engine.ts";
 import { detectReinforcement, reinforce, recordPattern as recordBasalPattern } from "../modules/basal-ganglia.ts";
+import { deriveHabitSignature } from "../modules/habit-signature.ts";
 import { startTrace, addTraceStep, completeTrace, reflectOnConsciousness } from "../modules/introspection.ts";
 import { resetCycleState } from "../modules/neural-pathways.ts";
 import { truncateForWorkingMemory, storeCompletedCycle } from "../modules/working-memory.ts";
@@ -396,7 +397,10 @@ export function createCycleEngine(deps: CycleEngineDeps): CycleEngine {
     // ── Basal ganglia: record this interaction for habit formation ──
     if (brainConfig.modules.basalGanglia && input.length > 5 && cycle.classification) {
       const domain = cycle.classification.domain;
-      recordBasalPattern(input.slice(0, 300), [domain], domain);
+      // v0.9.33: ключ привычки — схема действия (тип задачи + домен),
+      // а не текст сообщения: иначе привычки не могут повторяться.
+      const signature = deriveHabitSignature(input, domain);
+      recordBasalPattern(signature.cue, signature.routine, domain);
     }
 
     // ── Dopamine: compute global reward and distribute to modules ──
