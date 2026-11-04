@@ -365,15 +365,24 @@ export function createCommandRegistry(): CommandRegistryInstance {
             `Learning cycles: ${lStats.cycleCount}`,
             `Active insights: ${lStats.activeInsights}`,
             `Tracked modules: ${lStats.moduleCount}`,
+            `System reward (last ${lStats.rewardWindow} cycles): ${(lStats.systemReward * 100).toFixed(0)}%`,
           ];
 
           if (Object.keys(lStats.modulePerformance).length > 0) {
-            lines.push("", "**Per-Module Performance:**");
+            lines.push(
+              "",
+              "**Per-Module Performance** (share = part of the system reward; err = issues/cycles in the same window):",
+            );
             for (const [mod, perf] of Object.entries(lStats.modulePerformance)) {
               const trendIcon =
                 perf.trend === "improving" ? "^" : perf.trend === "degrading" ? "v" : "=";
+              // v0.9.37: пустое окно — это не «0% ошибок», а отсутствие наблюдений
+              const errText =
+                perf.cyclesInWindow > 0
+                  ? `err=${(perf.errorRate * 100).toFixed(0)}% (${perf.errorsInWindow}/${perf.cyclesInWindow})`
+                  : "err=n/a";
               lines.push(
-                `  ${mod}: reward=${(perf.avgReward * 100).toFixed(0)}% err=${(perf.errorRate * 100).toFixed(0)}% [${trendIcon}]`,
+                `  ${mod}: share=${(perf.share * 100).toFixed(1)}% ${errText} [${trendIcon}]`,
               );
             }
           }

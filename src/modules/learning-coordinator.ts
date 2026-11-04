@@ -38,6 +38,12 @@ import type {
 
 type ModuleMetrics = {
   recentRewards: number[];
+  /**
+   * v0.9.37: число issue-сигналов по циклам — параллельно recentRewards.
+   * Пожизненные errorCount/activationCount смешивали разные единицы
+   * (issues в числителе, циклы в знаменателе) и не могли убывать.
+   */
+  recentIssues: number[];
   activationCount: number;
   errorCount: number;
   totalReward: number;
@@ -48,7 +54,24 @@ export type LearningStats = {
   moduleCount: number;
   activeInsights: number;
   recentInsights: LearningInsight[];
-  modulePerformance: Record<string, { avgReward: number; errorRate: number; trend: string }>;
+  /** v0.9.37: средняя системная награда за окно — сумма долей всех модулей. */
+  systemReward: number;
+  /** v0.9.37: длина окна, по которому считаются награды и ошибки. */
+  rewardWindow: number;
+  modulePerformance: Record<
+    string,
+    {
+      /** Средняя выплата модулю: системная награда × credit. */
+      avgReward: number;
+      /** v0.9.37: доля модуля в системной награде — честное имя прежнего «reward%». */
+      share: number;
+      errorRate: number;
+      /** v0.9.37: issues и циклы в окне — единицы измерения явно. */
+      errorsInWindow: number;
+      cyclesInWindow: number;
+      trend: string;
+    }
+  >;
 };
 
 export type LearningCoordinatorInstance = {
@@ -68,6 +91,19 @@ export type LearningCoordinatorInstance = {
 
 /** Domain performance trend window */
 const DOMAIN_TREND_WINDOW = 20;
+
+/** v0.9.37: окно, по которому считаются награды и ошибки в отчёте. */
+const STATS_WINDOW = 20;
+
+/**
+ * v0.9.37: сколько инсайт живёт без подтверждения наблюдением.
+ * До этого время не хранилось вовсе, и инсайты висели вечно: половина
+ * слотов была занята «корреляциями» из эпохи до v0.9.19.
+ */
+const INSIGHT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** v0.9.37: предел активных инсайтов в памяти. */
+const MAX_ACTIVE_INSIGHTS = 30;
 
 // ── Factory ─────────────────────────────────────────────────────────
 
@@ -140,6 +176,34 @@ export function createLearningCoordinator(
     } catch {
       // Fresh start
     }
+
+    // v0.9.37: окно ошибок у записей до 0.9.37 отсутствует
+    for (const metrics of moduleMetrics.values()) {
+      if (!Array.isArray(metrics.recentIssues)) metrics.recentIssues = [];
+    }
+    migrateLegacyInsights();
+    pruneInsights(Date.now());
+  }
+
+  /**
+   * v0.9.37: записи до этой версии не знали времени жизни и замораживали
+   * счётчик на моменте создания. Восстанавливаем время и число наблюдений
+   * из трекера повторяющихся проблем; инсайты без времени (корреляции и
+   * аномалии старого образца) просто истекают — они и были артефактами.
+   */
+  function migrateLegacyInsights(): void {
+    for (const insight of activeInsights) {
+      if (insight.lastConfirmedAt !== undefined) continue;
+      if (insight.source !== "cerebellum-feedback") continue;
+      const description = insight.description.toLowerCase();
+      for (const [key, entry] of recurringIssues) {
+        if (!description.includes(key.slice(0, 30))) continue;
+        insight.createdAt = entry.lastSeen;
+        insight.lastConfirmedAt = entry.lastSeen;
+        insight.occurrences = entry.count;
+        break;
+      }
+    }
   }
 
   function persistState(): void {
@@ -154,7 +218,7 @@ export function createLearningCoordinator(
           {
             moduleMetrics: metricsObj,
             cycleHistory: cycleHistory.slice(-50), // Keep last 50 cycles
-            activeInsights: activeInsights.slice(-20),
+            activeInsights,
             cycleCount,
             domainPerformance: Object.fromEntries(domainPerformance),
             recurringIssues: Object.fromEntries(recurringIssues),
@@ -183,6 +247,11 @@ export function createLearningCoordinator(
       if (metrics.recentRewards.length > 100) {
         metrics.recentRewards = metrics.recentRewards.slice(-100);
       }
+      // v0.9.37: параллельное окно ошибок — ноль по умолчанию, issue добавит
+      metrics.recentIssues.push(0);
+      if (metrics.recentIssues.length > 100) {
+        metrics.recentIssues = metrics.recentIssues.slice(-100);
+      }
       metrics.activationCount++;
       metrics.totalReward += moduleReward;
     }
@@ -200,10 +269,77 @@ export function createLearningCoordinator(
     persistState();
   }
 
+  // ── Insight bookkeeping (v0.9.37) ───────────────────────────────
+
+  /** Один issue-сигнал: пополняем окно текущего цикла и пожизненный счётчик. */
+  function recordModuleIssue(moduleName: string): void {
+    const metrics = getOrCreateMetrics(moduleName);
+    metrics.errorCount++;
+    if (metrics.recentIssues.length === 0) {
+      metrics.recentIssues.push(1);
+    } else {
+      metrics.recentIssues[metrics.recentIssues.length - 1] += 1;
+    }
+  }
+
+  /** Ошибки за окно: issues и циклы раздельно, чтобы не смешивать единицы. */
+  function errorStats(
+    metrics: ModuleMetrics,
+    windowSize: number,
+  ): { rate: number; errors: number; cycles: number } {
+    const window = (metrics.recentIssues ?? []).slice(-windowSize);
+    const cycles = window.length;
+    const errors = window.reduce((s, v) => s + v, 0);
+    return { rate: cycles > 0 ? Math.min(1, errors / cycles) : 0, errors, cycles };
+  }
+
+  /** Свежие сверху, при равном времени — более частые. */
+  function rankInsights(now: number): LearningInsight[] {
+    return activeInsights
+      .filter((i) => !isInsightStale(i, now))
+      .sort(
+        (a, b) =>
+          (b.lastConfirmedAt ?? 0) - (a.lastConfirmedAt ?? 0) ||
+          (b.occurrences ?? 1) - (a.occurrences ?? 1),
+      );
+  }
+
+  /** Убрать просроченные инсайты и удержать список в пределах лимита. */
+  function pruneInsights(now: number): void {
+    activeInsights = activeInsights.filter((i) => !isInsightStale(i, now));
+    if (activeInsights.length > MAX_ACTIVE_INSIGHTS) {
+      activeInsights = rankInsights(now).slice(0, MAX_ACTIVE_INSIGHTS);
+    }
+  }
+
+  /** Добавить инсайт или подтвердить уже известный, не плодя дубликат. */
+  function pushInsight(insight: LearningInsight, now: number): void {
+    const existing = activeInsights.find(
+      (i) => i.source === insight.source && i.target === insight.target && i.type === insight.type,
+    );
+    if (existing) {
+      existing.lastConfirmedAt = now;
+      existing.occurrences = (existing.occurrences ?? 1) + 1;
+      existing.confidence = Math.max(existing.confidence, insight.confidence);
+      existing.description = insight.description;
+      return;
+    }
+    const created: LearningInsight = {
+      ...insight,
+      createdAt: now,
+      lastConfirmedAt: now,
+      occurrences: 1,
+    };
+    activeInsights.push(created);
+    bus.emitSync("learning:insight-discovered", created);
+  }
+
   // ── Insight Generation ──────────────────────────────────────────
 
   function generateInsights(cfg: BrainAgentConfig): void {
     const window = cfg.learning.trendWindowSize;
+    const now = Date.now();
+    pruneInsights(now);
     const newInsights: LearningInsight[] = [];
 
     // Analyze per-module trends
@@ -232,9 +368,9 @@ export function createLearningCoordinator(
       }
 
       // Detect high-error modules
-      if (metrics.errorCount > 0 && metrics.activationCount > 10) {
-        // v0.2.1: ошибка не может случаться чаще активаций — потолок 100%
-        const errorRate = Math.min(1, metrics.errorCount / metrics.activationCount);
+      if (metrics.activationCount > 10) {
+        // v0.9.37: ошибка считается по окну — старая вспышка не красит модуль вечно
+        const errorRate = errorStats(metrics, window).rate;
         if (errorRate > 0.3) {
           newInsights.push({
             type: "anomaly",
@@ -261,10 +397,10 @@ export function createLearningCoordinator(
         const rewardsA = metricsA.recentRewards.slice(-len);
         const rewardsB = metricsB.recentRewards.slice(-len);
 
-        // v0.9.19: идентичные последовательности наград = модули синхронно
-        // получают один и тот же сигнал (credit assignment равен для всех).
-        // Корреляция r=1.00 здесь — структурный шум, а не наблюдение.
-        if (rewardsA.every((v, i) => v === rewardsB[i])) continue;
+        // v0.9.19: идентичные последовательности наград = общий сигнал, а не связь.
+        // v0.9.37: точного равенства мало — модуль с credit ×0.125 от того же
+        // сигнала даёт пропорциональный ряд и r≈1. Проверяем пропорциональность.
+        if (isProportionalSeries(rewardsA, rewardsB)) continue;
 
         const correlation = computeCorrelation(rewardsA, rewardsB);
 
@@ -294,24 +430,10 @@ export function createLearningCoordinator(
       }
     }
 
-    // Deduplicate insights (don't add same insight twice)
-    for (const insight of newInsights) {
-      const exists = activeInsights.some(
-        (existing) =>
-          existing.source === insight.source &&
-          existing.target === insight.target &&
-          existing.type === insight.type,
-      );
-      if (!exists) {
-        activeInsights.push(insight);
-        bus.emitSync("learning:insight-discovered", insight);
-      }
-    }
+    // v0.9.37: повторное наблюдение подтверждает инсайт вместо дубликата
+    for (const insight of newInsights) pushInsight(insight, now);
 
-    // Prune old insights
-    if (activeInsights.length > 30) {
-      activeInsights = activeInsights.slice(-20);
-    }
+    pruneInsights(now);
   }
 
   // ── Cycle Report Generation ─────────────────────────────────────
@@ -336,8 +458,7 @@ export function createLearningCoordinator(
       if (trendDiff > 0.1) trend = "improving";
       else if (trendDiff < -0.1) trend = "degrading";
 
-      const errorRate =
-        metrics.activationCount > 0 ? Math.min(1, metrics.errorCount / metrics.activationCount) : 0;
+      const errorRate = errorStats(metrics, STATS_WINDOW).rate;
 
       perModuleMetrics[modName] = {
         activations: metrics.activationCount,
@@ -374,7 +495,9 @@ export function createLearningCoordinator(
         learningEfficiency,
         adaptationRate,
       },
-      insights: activeInsights.filter((i) => i.actionable).slice(-5),
+      insights: rankInsights(Date.now())
+        .filter((i) => i.actionable)
+        .slice(0, 5),
     };
 
     cycleHistory.push(report);
@@ -392,6 +515,7 @@ export function createLearningCoordinator(
     if (!metrics) {
       metrics = {
         recentRewards: [],
+        recentIssues: [],
         activationCount: 0,
         errorCount: 0,
         totalReward: 0,
@@ -420,10 +544,7 @@ export function createLearningCoordinator(
           // Track which modules might be responsible
           for (const issue of data.issues) {
             const implicated = identifyImplicatedModule(issue);
-            if (implicated) {
-              const metrics = getOrCreateMetrics(implicated);
-              metrics.errorCount++;
-            }
+            if (implicated) recordModuleIssue(implicated);
           }
         }
       }),
@@ -433,45 +554,38 @@ export function createLearningCoordinator(
     unsubs.push(
       bus.on("dream:consolidation-complete", (data) => {
         if (data.contradictions > 0) {
-          // Deduplicate: only add if no recent similar insight exists
-          const hasRecent = activeInsights.some(
-            (i) =>
-              i.source === "hippocampus" &&
-              i.target === "semantic-extractor" &&
-              i.description.includes("contradictions"),
-          );
-          if (!hasRecent) {
-            activeInsights.push({
+          // v0.9.37: через pushInsight — дедупликация и подтверждение вместо
+          // вечного дубликата без времени создания.
+          pushInsight(
+            {
               type: "anomaly",
               source: "hippocampus",
               target: "semantic-extractor",
               description: `${data.contradictions} contradictions found during consolidation — extraction quality may need improvement`,
               confidence: 0.7,
               actionable: true,
-            });
-          }
+            },
+            Date.now(),
+          );
+          persistState();
         }
       }),
       // Track fact revisions — high revision rate signals unstable extraction
       bus.on("hippocampus:fact-revised", () => {
         revisionCounter++;
         if (revisionCounter >= 5) {
-          const hasRecent = activeInsights.some(
-            (i) =>
-              i.source === "hippocampus" &&
-              i.target === "semantic-extractor" &&
-              i.description.includes("revision"),
-          );
-          if (!hasRecent) {
-            activeInsights.push({
+          // v0.9.37: с временем жизни — иначе запись мгновенно считается устаревшей
+          pushInsight(
+            {
               type: "pattern",
               source: "hippocampus",
               target: "semantic-extractor",
               description: `${revisionCounter} fact revisions detected — semantic memory is actively reconsolidating`,
               confidence: 0.6,
               actionable: false,
-            });
-          }
+            },
+            Date.now(),
+          );
           revisionCounter = 0;
         }
       }),
@@ -489,13 +603,16 @@ export function createLearningCoordinator(
   // ── Public instance API ─────────────────────────────────────────
 
   function getStats(): LearningStats {
-    const modulePerf: Record<string, { avgReward: number; errorRate: number; trend: string }> = {};
+    const now = Date.now();
+    pruneInsights(now);
+
+    const modulePerf: LearningStats["modulePerformance"] = {};
 
     for (const [name, metrics] of moduleMetrics) {
-      const recent = metrics.recentRewards.slice(-20);
+      const recent = metrics.recentRewards.slice(-STATS_WINDOW);
       const avgReward = recent.length > 0 ? recent.reduce((s, v) => s + v, 0) / recent.length : 0;
-      const errorRate =
-        metrics.activationCount > 0 ? Math.min(1, metrics.errorCount / metrics.activationCount) : 0;
+      // v0.9.37: err по окну — issues и циклы раздельно, без пожизненного знаменателя
+      const errors = errorStats(metrics, STATS_WINDOW);
 
       // Trend
       const firstHalf = recent.slice(0, Math.floor(recent.length / 2));
@@ -507,14 +624,32 @@ export function createLearningCoordinator(
       const diff = secondAvg - firstAvg;
       const trend = diff > 0.1 ? "improving" : diff < -0.1 ? "degrading" : "stable";
 
-      modulePerf[name] = { avgReward, errorRate, trend };
+      modulePerf[name] = {
+        avgReward,
+        share: 0,
+        errorRate: errors.rate,
+        errorsInWindow: errors.errors,
+        cyclesInWindow: errors.cycles,
+        trend,
+      };
+    }
+
+    // creditAssignment нормирован к 1, поэтому сумма долей = системная награда
+    let systemReward = 0;
+    for (const perf of Object.values(modulePerf)) systemReward += perf.avgReward;
+    if (systemReward > 0) {
+      for (const perf of Object.values(modulePerf)) {
+        perf.share = Math.max(0, perf.avgReward) / systemReward;
+      }
     }
 
     return {
       cycleCount,
       moduleCount: moduleMetrics.size,
       activeInsights: activeInsights.length,
-      recentInsights: activeInsights.slice(-5),
+      recentInsights: rankInsights(now).slice(0, 5),
+      systemReward,
+      rewardWindow: STATS_WINDOW,
       modulePerformance: modulePerf,
     };
   }
@@ -529,7 +664,10 @@ export function createLearningCoordinator(
    * Injected into prompts when the system has actionable insights.
    */
   function buildContext(): string | undefined {
-    const actionable = activeInsights.filter((i) => i.actionable && i.confidence > 0.6);
+    const now = Date.now();
+    // v0.9.37: берём свежие и подтверждённые, а не первые три по порядку вставки —
+    // slice(0, 3) отдавал самые старые записи, которые уже не повторялись.
+    const actionable = rankInsights(now).filter((i) => i.actionable && i.confidence > 0.6);
     if (actionable.length === 0) return undefined;
 
     const lines: string[] = [
@@ -552,9 +690,12 @@ export function createLearningCoordinator(
     const key = issueType.toLowerCase().trim();
     if (!key) return undefined;
 
+    const now = Date.now();
+    pruneInsights(now);
+
     const existing = recurringIssues.get(key) ?? { count: 0, lastSeen: 0 };
     existing.count++;
-    existing.lastSeen = Date.now();
+    existing.lastSeen = now;
     recurringIssues.set(key, existing);
 
     if (existing.count < 3) {
@@ -562,12 +703,20 @@ export function createLearningCoordinator(
       return undefined;
     }
 
-    // Deduplicate against existing insights
-    const alreadyExists = activeInsights.some(
+    // v0.9.37: повтор — не дубликат, а подтверждение. Обновляем время, счётчик
+    // и текст, иначе в промпт навсегда уходит «(17x)» при 25 реальных фактах.
+    const alreadyExists = activeInsights.find(
       (i) =>
         i.source === "cerebellum-feedback" && i.description.toLowerCase().includes(key.slice(0, 30)),
     );
-    if (alreadyExists) return undefined;
+    if (alreadyExists) {
+      alreadyExists.lastConfirmedAt = now;
+      alreadyExists.occurrences = existing.count;
+      alreadyExists.confidence = Math.min(0.9, 0.5 + existing.count * 0.1);
+      alreadyExists.description = `Recurring problem (${existing.count}x): ${issueType}. Adjust approach for this type of issue.`;
+      persistState();
+      return undefined;
+    }
 
     const insight: LearningInsight = {
       type: "pattern",
@@ -576,12 +725,13 @@ export function createLearningCoordinator(
       description: `Recurring problem (${existing.count}x): ${issueType}. Adjust approach for this type of issue.`,
       confidence: Math.min(0.9, 0.5 + existing.count * 0.1),
       actionable: true,
+      createdAt: now,
+      lastConfirmedAt: now,
+      occurrences: existing.count,
     };
 
     activeInsights.push(insight);
-    if (activeInsights.length > 30) {
-      activeInsights = activeInsights.slice(-20);
-    }
+    pruneInsights(now);
 
     persistState();
 
@@ -778,6 +928,42 @@ export function identifyImplicatedModule(issue: string): string | undefined {
   return undefined;
 }
 
+/**
+ * v0.9.37: инсайт без времени (легаси-запись) или не подтверждённый дольше TTL
+ * считается устаревшим и в промпт не попадает.
+ */
+function isInsightStale(insight: LearningInsight, now: number): boolean {
+  const last = insight.lastConfirmedAt ?? insight.createdAt;
+  if (last === undefined) return true;
+  return now - last > INSIGHT_TTL_MS;
+}
+
+/**
+ * v0.9.37: две серии пропорциональны, если одна — это другая, умноженная на
+ * константу. Для модулей это значит «общий сигнал с разным credit», а не
+ * совместное успешное или неуспешное поведение. Точного равенства (v0.9.19)
+ * мало: credit 0.125 против 0.25 даёт ряд вдвое меньше и r≈1.
+ */
+export function isProportionalSeries(a: number[], b: number[]): boolean {
+  const n = Math.min(a.length, b.length);
+  const ratios: number[] = [];
+
+  for (let i = 0; i < n; i++) {
+    if (a[i] === 0 && b[i] === 0) continue;
+    if (a[i] === 0 || b[i] === 0) return false;
+    ratios.push(a[i] / b[i]);
+  }
+
+  if (ratios.length < 5) return false;
+
+  const sorted = [...ratios].sort((x, y) => x - y);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  if (!Number.isFinite(median) || median === 0) return false;
+
+  const tolerance = Math.abs(median) * 0.02;
+  return ratios.every((r) => Math.abs(r - median) <= tolerance);
+}
+
 /** Pearson correlation between two arrays */
 function computeCorrelation(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
@@ -827,6 +1013,8 @@ export function getLearningStats(): LearningStats {
       moduleCount: 0,
       activeInsights: 0,
       recentInsights: [],
+      systemReward: 0,
+      rewardWindow: STATS_WINDOW,
       modulePerformance: {},
     }
   );

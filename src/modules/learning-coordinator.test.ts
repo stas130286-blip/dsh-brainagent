@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -13,6 +13,7 @@ import {
   getDomainPerformance,
   buildCapabilityContext,
   recordRecurringIssue,
+  isProportionalSeries,
 } from "./learning-coordinator.ts";
 import type { BrainAgentConfig, DopamineSignal } from "./types.ts";
 import { DEFAULT_CONFIG } from "./types.ts";
@@ -376,6 +377,149 @@ describe("Learning Coordinator", () => {
       // 3rd occurrence after reload should create insight
       const insight = recordRecurringIssue("persist test");
       expect(insight).toBeDefined();
+    });
+  });
+
+  // ── v0.9.37: время жизни инсайтов и окно ошибок ─────────────
+
+  describe("v0.9.37: proportional series guard", () => {
+    function emitWithCredit(reward: number, credit: Record<string, number>): void {
+      const modules = Object.keys(credit);
+      const signal: DopamineSignal = {
+        reward,
+        predictionError: reward - 0.5,
+        participatingModules: modules,
+        creditAssignment: credit,
+        context: {
+          domain: "technical",
+          complexity: "moderate",
+          emotion: "neutral",
+          input: "test input",
+        },
+      };
+      bus.emitSync("dopamine:reward", signal);
+    }
+
+    it("узнаёт пропорциональные ряды и отвергает независимые", () => {
+      const a = [0.2, 0.4, 0.6, 0.3, 0.5, 0.1];
+      const halved = a.map((v) => v * 0.5);
+      expect(isProportionalSeries(a, halved)).toBe(true);
+
+      const independent = [0.2, -0.1, 0.6, 0.3, -0.4, 0.1];
+      expect(isProportionalSeries(a, independent)).toBe(false);
+
+      // общий ноль допустим, расхождение нулей — уже нет
+      expect(isProportionalSeries([0, 1, 1, 1, 1, 1], [0, 2, 2, 2, 2, 2])).toBe(true);
+      expect(isProportionalSeries([0, 1, 1, 1, 1, 1], [1, 2, 2, 2, 2, 2])).toBe(false);
+    });
+
+    it("разный credit при общем сигнале не даёт корреляционный инсайт", () => {
+      // Оба ряда — один и тот же сигнал, умноженный на 0.2 и 0.3: r≈1, но связи нет
+      for (let i = 0; i < 20; i++) {
+        emitWithCredit(0.5 + (i % 4) * 0.1, { moduleA: 0.2, moduleB: 0.3 });
+      }
+
+      const stats = getLearningStats();
+      expect(stats.recentInsights.filter((i) => i.type === "correlation")).toHaveLength(0);
+    });
+  });
+
+  describe("v0.9.37: err считается по окну", () => {
+    it("issues и циклы в окне, старая вспышка затухает", () => {
+      emitReward(["cerebellum"], 0.5);
+      bus.emitSync("cerebellum:validated", {
+        passed: false,
+        issues: ["Response may contain sensitive data: email address."],
+      });
+
+      const first = getLearningStats().modulePerformance["cerebellum"];
+      expect(first.errorsInWindow).toBe(1);
+      expect(first.cyclesInWindow).toBe(1);
+
+      // 20 чистых циклов вытесняют вспышку из окна
+      for (let i = 0; i < 20; i++) emitReward(["cerebellum"], 0.5);
+
+      const later = getLearningStats().modulePerformance["cerebellum"];
+      expect(later.errorRate).toBeLessThan(0.1);
+      expect(later.errorsInWindow).toBe(0);
+    });
+
+    it("доля модулей суммируется в системную награду", () => {
+      for (let i = 0; i < 10; i++) emitReward(["thalamus", "hippocampus"], 0.4);
+
+      const stats = getLearningStats();
+      expect(stats.systemReward).toBeCloseTo(0.4, 5);
+      expect(stats.modulePerformance["thalamus"].share).toBeCloseTo(0.5, 5);
+    });
+  });
+
+  describe("v0.9.37: жизненный цикл инсайтов", () => {
+    it("счётчик обновляется, а не замораживается", () => {
+      for (let i = 0; i < 5; i++) recordRecurringIssue("freeze test");
+
+      const hits = getLearningStats().recentInsights.filter((i) =>
+        i.description.includes("freeze test"),
+      );
+      expect(hits).toHaveLength(1);
+      expect(hits[0].description).toContain("5x");
+      expect(hits[0].occurrences).toBe(5);
+    });
+
+    it("инсайт истекает, если не подтверждался", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        recordRecurringIssue("ttl test");
+        recordRecurringIssue("ttl test");
+        recordRecurringIssue("ttl test");
+        expect(buildLearningContext()).toContain("ttl test");
+
+        vi.setSystemTime(new Date("2026-01-20T00:00:00Z"));
+        expect(buildLearningContext()).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("легаси-инсайты мигрируют из трекера, корреляции без времени умирают", () => {
+      const dir = join(tmpDir, ".brainagent", "learning");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "coordinator.json"),
+        JSON.stringify({
+          moduleMetrics: {},
+          cycleHistory: [],
+          cycleCount: 5,
+          activeInsights: [
+            {
+              type: "pattern",
+              source: "cerebellum-feedback",
+              target: "system",
+              description:
+                "Recurring problem (3x): brevity issue. Adjust approach for this type of issue.",
+              confidence: 0.8,
+              actionable: true,
+            },
+            {
+              type: "correlation",
+              source: "thalamus",
+              target: "hippocampus",
+              description:
+                'Modules "thalamus" and "hippocampus" are strongly correlated (r=0.99) — they succeed/fail together',
+              confidence: 0.99,
+              actionable: false,
+            },
+          ],
+          recurringIssues: { "brevity issue": { count: 9, lastSeen: Date.now() - 60_000 } },
+        }),
+        "utf8",
+      );
+
+      initLearningCoordinator(tmpDir, DEFAULT_CONFIG);
+
+      const stats = getLearningStats();
+      expect(stats.activeInsights).toBe(1);
+      expect(stats.recentInsights[0].occurrences).toBe(9);
     });
   });
 });

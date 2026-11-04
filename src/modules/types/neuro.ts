@@ -71,6 +71,12 @@ export type LearningInsight = {
   description: string;
   confidence: number;
   actionable: boolean;
+  /** v0.9.37: когда инсайт появился (ms). У легаси-записей отсутствует. */
+  createdAt?: number;
+  /** v0.9.37: когда наблюдение последний раз подтверждало инсайт. */
+  lastConfirmedAt?: number;
+  /** v0.9.37: сколько раз наблюдение подтверждалось. */
+  occurrences?: number;
 };
 
 // ── Synaptic Plasticity types ─────────────────────────────────────
